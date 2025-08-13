@@ -1,216 +1,169 @@
 import streamlit as st
 
-st.set_page_config(page_title="MBTI 인사이트 가이드", page_icon="🧭", layout="centered")
+st.set_page_config(page_title="MBTI 인사이트: 큐티 컬러 에디션", page_icon="🌈", layout="wide")
 
-MBTIS = [
-    "INTJ","INTP","ENTJ","ENTP",
-    "INFJ","INFP","ENFJ","ENFP",
-    "ISTJ","ISFJ","ESTJ","ESFJ",
-    "ISTP","ISFP","ESTP","ESFP"
-]
-
-DATA = {
-    "INTJ": {
-        "요약": "전략가형. 장기적 목표를 세우고 체계적으로 실행하는 데 강점.",
-        "특징": [
-            "논리적·분석적 사고, 독립적 몰입 선호",
-            "비효율을 싫어하고 구조화·최적화에 관심",
-            "깊은 주제에 대한 장기 프로젝트에 강함"
-        ],
-        "추천직업": [
-            "데이터 분석/과학, 전략기획, 연구직, 제품 매니저",
-            "소프트웨어 엔지니어, 투자/컨설팅, 정책 분석"
-        ],
-        "관계팁": [
-            "직설적 피드백 시 상대의 감정 고려하기",
-            "아이디어 공유 전에 맥락과 목적을 짧게 설명",
-            "가끔은 ‘완벽’보다 ‘공유’를 우선"
-        ],
-        "공부팁": [
-            "장기 로드맵(연-월-주) → 역산 계획",
-            "심화·원리 위주 학습 + 주 1회 개념 리팩터링",
-            "포모도로로 과몰입 시간 관리(깊게-짧게-반복)"
-        ]
-    },
-    "INTP": {
-        "요약": "사고형 사색가. 개념화·모델링에 강하고 호기심이 많음.",
-        "특징": [
-            "원리 탐구, 문제 구조화, 가설 세우기 즐김",
-            "루틴·반복 과제보다 새로운 문제 선호"
-        ],
-        "추천직업": [
-            "연구/개발, 알고리즘/백엔드, 아키텍처 설계",
-            "테크니컬 라이터, 특허/기술분석"
-        ],
-        "관계팁": [
-            "생각을 말로 ‘초안처럼’ 자주 공유하기",
-            "대화에서 결론·다음 단계 명확히"
-        ],
-        "공부팁": [
-            "개념 지도를 그려 상호 연결",
-            "틀린 문제는 ‘왜 틀렸는가’ 원인 분해",
-            "마감 전 체크리스트로 실행 강제"
-        ]
-    },
-    "ENTJ": {
-        "요약": "지휘관형. 목표 지향, 조직·리더십 강점.",
-        "특징": ["의사결정 빠름, 성과·효율 중시", "큰 그림과 실행 플랜을 동시에 다룸"],
-        "추천직업": ["사업/창업, 전략/컨설팅, 제품/프로젝트 매니지먼트", "세일즈 리더, 운영/조직관리"],
-        "관계팁": ["성과대화 전 공감·경청 1분 확보", "역할/기대치를 명확히 문서화"],
-        "공부팁": ["성과 지표(KPI) 설정, 주간 리뷰", "스터디 리드하면서 지식 정착"]
-    },
-    "ENTP": {
-        "요약": "변론가형. 아이디어 생성·문제 재정의에 강함.",
-        "특징": ["새로움 선호, 다각도 토론 즐김", "권태를 느끼면 동기 급감"],
-        "추천직업": ["제품 기획, 그로스/마케팅, 창업, 컨설팅", "UX 리서치, 미디어/콘텐츠 기획"],
-        "관계팁": ["반박 전에 공감/요약으로 신뢰 형성", "아이디어는 실험 계획과 함께 제안"],
-        "공부팁": ["짧은 스프린트 과제, 실험·퀴즈화", "보상/챌린지로 흥미 유지"]
-    },
-    "INFJ": {
-        "요약": "옹호자형. 가치지향, 통찰과 공감의 조합.",
-        "특징": ["의미·가치가 분명할 때 몰입 극대화", "소수 깊은 관계 선호"],
-        "추천직업": ["상담/심리, 교육, 콘텐츠 기획, 비영리/정책", "브랜드/스토리 전략"],
-        "관계팁": ["의도·가치 공유로 협업 신뢰 구축", "경계 설정으로 과소모 방지"],
-        "공부팁": ["목표를 가치와 연결, 저강도 꾸준함", "리플렉션 저널로 통찰 축적"]
-    },
-    "INFP": {
-        "요약": "중재자형. 창의적·가치 중심, 몰입 시 폭발력.",
-        "특징": ["자율성·의미가 중요", "감정 에너지 영향 큼"],
-        "추천직업": ["콘텐츠/문학/디자인, 심리/상담, 사회복지", "브랜드 스토리/마케팅"],
-        "관계팁": ["감정-사실 분리해서 표현 연습", "기한·기대 합의서를 미리 만들기"],
-        "공부팁": ["작은 승리 루프(15~25분 단위)", "시각 보드·문장으로 동기 고정"]
-    },
-    "ENFJ": {
-        "요약": "선도자형. 조정·동기부여에 강함.",
-        "특징": ["사람과 비전 정렬을 잘함", "팀 학습 촉진"],
-        "추천직업": ["교육/HR/코칭, 커뮤니케이션, 조직 개발", "브랜드/커뮤니티 매니지먼트"],
-        "관계팁": ["배려-경계 균형, 자기시간 확보", "피드백은 구체-칭찬-개선 구조"],
-        "공부팁": ["스터디 리드, 티칭 백으로 정착", "타임블럭으로 일정 보호"]
-    },
-    "ENFP": {
-        "요약": "활동가형. 상상력·사람 중심, 추진력 높음.",
-        "특징": ["새로움/자율성 선호, 다양성에 강함"],
-        "추천직업": ["마케팅/브랜딩, 콘텐츠/기획, 창업, 교육/코칭"],
-        "관계팁": ["과다 약속 줄이고 핵심 3개에 집중", "아이디어는 실행 파트너와 매칭"],
-        "공부팁": ["테마 주간 운영, 보상/게임화", "마감 전 공개 약속으로 동기 유지"]
-    },
-    "ISTJ": {
-        "요약": "현실주의자형. 책임감·정확성, 절차·규범 존중.",
-        "특징": ["체크리스트 운영에 강함", "신뢰성과 꾸준함"],
-        "추천직업": ["회계/행정/법무, 운영/품질, 데이터 관리", "공공/안전/감사"],
-        "관계팁": ["변경 시 근거와 일정 명확화", "일관된 약속 관리"],
-        "공부팁": ["표준 루틴, 오답 데이터베이스", "주간 리포트로 누적 관리"]
-    },
-    "ISFJ": {
-        "요약": "수호자형. 성실·세심, 지원형 팀 플레이어.",
-        "특징": ["세부·케어에 강점", "조용한 헌신"],
-        "추천직업": ["간호/보건/교육 지원, 운영/CS, 기록 관리", "행정/복지"],
-        "관계팁": ["요청 거절의 기준 만들기", "감정 과소비 주의"],
-        "공부팁": ["안정 루틴, 누적형 암기법", "작은 칭찬·보상으로 유지"]
-    },
-    "ESTJ": {
-        "요약": "경영자형. 구조화·실행력, 규율 중시.",
-        "특징": ["역할·프로세스 정립", "목표-지표-점검 선호"],
-        "추천직업": ["운영/총무/관리, 프로젝트 매니징, 세일즈 리드", "공공조직 리더십"],
-        "관계팁": ["규칙 앞서 공감 1문장", "의견 충돌은 데이터로 정리"],
-        "공부팁": ["계획-실행-점검 사이클, 주간 KPI", "짝 공부로 상호 점검"]
-    },
-    "ESFJ": {
-        "요약": "집정관형. 협력·배려, 조직 내 조화 중시.",
-        "특징": ["사람 중심 실무 강함", "관계와 실행 균형"],
-        "추천직업": ["교육/행정/CS, HR/조직문화, 행사/운영", "보건/복지"],
-        "관계팁": ["자기 돌봄 시간 예약", "경계 존중 메시지 연습"],
-        "공부팁": ["스터디 운영·요약 공유", "체크리스트/달력 관리"]
-    },
-    "ISTP": {
-        "요약": "장인형. 문제 해결 실전형, 손으로 다루는 일 선호.",
-        "특징": ["도구/시스템 최적화", "빠른 트러블슈팅"],
-        "추천직업": ["엔지니어링/정비, 보안/네트워크, 데이터 파이프라인", "프로토타이핑"],
-        "관계팁": ["침묵은 무관심이 아님을 표현", "선택지 제시형 커뮤니케이션"],
-        "공부팁": ["실습·프로젝트 베이스", "문제은행 속도+정확도 훈련"]
-    },
-    "ISFP": {
-        "요약": "모험가형. 미적 감수성, 조용한 실천가.",
-        "특징": ["자율·유연 선호", "감각적 디테일 강점"],
-        "추천직업": ["디자인/영상/사진, 공간/제품 디자인", "보건/치료·케어"],
-        "관계팁": ["감정·요구를 부드럽게 언어화", "과도한 일정 압박 피하기"],
-        "공부팁": ["비주얼 노트, 예시 중심", "짧은 몰입 블록 + 산책 회복"]
-    },
-    "ESTP": {
-        "요약": "사업가형. 실행력·상황대응, 현장감각.",
-        "특징": ["즉각 문제 해결, 모험·경쟁 즐김"],
-        "추천직업": ["세일즈/영업, 이벤트/스포츠, 위기관리/보안", "그로스/퍼포먼스"],
-        "관계팁": ["승부욕을 협업 목표로 전환", "피드백은 짧고 명확하게"],
-        "공부팁": ["타이머로 레이스처럼, 점수화 시스템", "실전 모의 반복"]
-    },
-    "ESFP": {
-        "요약": "연예인형. 사교적·현장 에너지, 즐거움 확산.",
-        "특징": ["즉각 피드백 선호, 팀 사기 진작"],
-        "추천직업": ["이벤트/홍보/방송, 퍼포먼스/세일즈, 서비스 기획", "콘텐츠 크리에이터"],
-        "관계팁": ["즉흥 약속은 핵심에 집중", "피곤 신호 오면 회복 루틴"],
-        "공부팁": ["게임화·보상, 스터디로 분위기 리드", "숏 세션 다회 반복"]
-    }
+# 이모지 매핑
+MBTI_EMOJI = {
+    "INTJ":"🧠✨","INTP":"🧩🔍","ENTJ":"🧭🚀","ENTP":"💡🌀",
+    "INFJ":"🌙🕊️","INFP":"🎨🌿","ENFJ":"🌟🤝","ENFP":"🎉🌈",
+    "ISTJ":"📘✅","ISFJ":"🫶🌸","ESTJ":"📊🏗️","ESFJ":"😊🎀",
+    "ISTP":"🛠️⚡","ISFP":"🖌️🍃","ESTP":"🏁🔥","ESFP":"🎤✨"
 }
 
-def get_mbti_result(mbti: str):
-    key = mbti.upper()
-    if key not in DATA:
-        return None
-    return DATA[key]
+MBTIS = list(MBTI_EMOJI.keys())
 
-def main():
-    st.title("MBTI 인사이트 가이드 🧭")
-    st.caption("MBTI 유형별 특징, 추천 직업, 인간관계 팁, 공부 전략을 한눈에")
+# 데모 데이터(핵심만 샘플, 기존 데이터에 연결 가능)
+DATA = {
+    "ENFP": {
+        "요약": "활동가형. 상상력과 사람 중심 에너지로 변화를 이끕니다.",
+        "특징": ["새로움/자율성 선호", "다양한 아이디어 연결", "팀 분위기 메이커"],
+        "추천직업": ["브랜딩/마케팅", "콘텐츠 기획", "교육/코칭", "창업"],
+        "관계팁": ["약속을 줄이고 핵심 3개에 집중", "아이디어는 실행 파트너와 매칭"],
+        "공부팁": ["테마 주간 운영", "보상·챌린지로 동기 유지", "공개 약속으로 마감 관리"]
+    },
+    "INTJ": {
+        "요약": "전략가형. 장기 목표를 체계적으로 달성합니다.",
+        "특징": ["분석·계획에 강점", "비효율 싫어함", "깊은 몰입 선호"],
+        "추천직업": ["전략/기획", "데이터/연구", "제품 매니징", "정책 분석"],
+        "관계팁": ["직설 피드백 시 감정 고려", "맥락/목적을 먼저 공유"],
+        "공부팁": ["역산 로드맵", "심화 원리 중심", "포모도로로 과몰입 관리"]
+    },
+    # 필요 유형 추가...
+}
+# 미정 데이터는 기본 템플릿
+DEFAULT = {
+    "요약": "해당 유형의 자세한 데이터는 곧 추가됩니다!",
+    "특징": ["호기심이 많고 성장 지향적", "상황에 따른 유연성 발휘"],
+    "추천직업": ["관심 분야 기반 탐색 추천", "강점-가치 일치 직무 우선"],
+    "관계팁": ["명확한 의사소통", "경계 존중과 피드백 교환"],
+    "공부팁": ["작은 승리 루프", "주간 리뷰로 개선 주기"]
+}
 
-    # 입력 영역
-    col1, col2 = st.columns([2,1])
-    with col1:
-        mbti = st.selectbox("당신의 MBTI를 선택하세요", MBTIS, index=MBTIS.index("INTJ"))
-    with col2:
-        show_all = st.checkbox("모든 항목 펼쳐보기", value=True)
+# 커스텀 CSS
+st.markdown("""
+<style>
+:root{
+  --pink:#FF66B3; --lime:#A4FF4F; --sky:#66E0FF; --lilac:#B39DFF; --lemon:#FFD166;
+}
+html, body, [class*="main"] {
+  font-family: "Pretendard","NanumSquareRound","Nunito","Apple SD Gothic Neo",sans-serif;
+}
+h1,h2,h3 { letter-spacing: 0.2px; }
+.big-title {
+  background: linear-gradient(90deg, var(--pink), var(--sky), var(--lilac));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  font-weight: 900; font-size: 44px; text-shadow: 0 0 18px rgba(255,102,179,0.25);
+}
+.sub-note {
+  color:#7a7a7a; font-size:14px; margin-top:-10px;
+}
+.gradient-card {
+  padding:18px 20px; border-radius:18px;
+  background: linear-gradient(135deg, rgba(255,102,179,0.15), rgba(102,224,255,0.15));
+  border:1px solid rgba(255,255,255,0.5);
+  box-shadow: 0 10px 24px rgba(179,157,255,0.25);
+  backdrop-filter: blur(6px);
+}
+.tag {
+  display:inline-block; padding:6px 10px; border-radius:999px;
+  background: linear-gradient(90deg, var(--lemon), var(--lime));
+  font-weight: 700; color:#222; margin-right:8px; margin-bottom:8px;
+}
+.mbti-badge {
+  display:inline-flex; align-items:center; gap:8px;
+  padding:10px 14px; border-radius:14px;
+  background: linear-gradient(90deg, rgba(180,255,120,0.6), rgba(255,209,102,0.6));
+  border:1px solid rgba(0,0,0,0.05);
+  font-weight:800; color:#222;
+  box-shadow: 0 6px 14px rgba(164,255,79,0.35);
+}
+.cute-button button {
+  background: linear-gradient(90deg, var(--pink), var(--lemon)) !important;
+  color: #222 !important; border: none !important; font-weight: 800 !important;
+  box-shadow: 0 8px 18px rgba(255,102,179,0.45) !important;
+}
+.cute-button button:hover {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
+.section-title {
+  font-size: 22px; font-weight: 900; color:#222;
+  text-shadow: 0 2px 8px rgba(255,209,102,0.4);
+  margin-top: 8px; margin-bottom: 8px;
+}
+hr { border: none; height:1px; background: linear-gradient(90deg, transparent, #ffd166, transparent); }
+</style>
+""", unsafe_allow_html=True)
 
-    result = get_mbti_result(mbti)
+# 헤더
+st.markdown('<div class="big-title">🌈 MBTI 인사이트 · 큐티 컬러 에디션 ✨</div>', unsafe_allow_html=True)
+st.caption("밝고 귀엽고 화려하게! 이모지와 컬러로 직관적인 유형 가이드를 만나보세요.")
 
-    if not result:
-        st.warning("유효한 MBTI를 선택해주세요.")
-        return
+# 입력 영역
+col1, col2, col3 = st.columns([2,1,1])
+with col1:
+    mbti = st.selectbox("MBTI를 선택하세요", MBTIS, index=MBTIS.index("ENFP"))
+with col2:
+    reveal = st.toggle("모든 항목 펼치기", value=True)
+with col3:
+    if st.button("🎈 컬러 풍선!"):
+        st.balloons()
 
-    st.subheader(f"{mbti} 요약")
-    st.write(result["요약"])
+emoji = MBTI_EMOJI.get(mbti, "✨")
+st.markdown(f'<div class="mbti-badge">{emoji} {mbti} 타입</div>', unsafe_allow_html=True)
 
-    # 탭 UI
-    tabs = st.tabs(["특징", "추천 직업", "인간관계 팁", "공부/시간관리"])
-    with tabs[0]:
-        if show_all:
-            for t in result["특징"]:
-                st.write(f"- {t}")
-        else:
-            st.write("• " + " / ".join(result["특징"][:3]))
-    with tabs[1]:
-        for job in result["추천직업"]:
-            st.write(f"- {job}")
-        st.info("참고: 직업 선택은 개인의 경험·역량·가치에 따라 달라질 수 있어요.")
-    with tabs[2]:
-        for tip in result["관계팁"]:
-            st.write(f"- {tip}")
-    with tabs[3]:
-        for tip in result["공부팁"]:
-            st.write(f"- {tip}")
-        st.caption("개인차가 있으니 자신에게 맞게 조정해보세요.")
+# 데이터 로딩
+info = DATA.get(mbti, DEFAULT)
 
-    # 추가: 타입 비교 기능
-    st.divider()
-    st.subheader("유형 비교")
-    c1, c2 = st.columns(2)
-    with c1:
-        a = st.selectbox("유형 A", MBTIS, index=MBTIS.index("INTP"), key="A")
-    with c2:
-        b = st.selectbox("유형 B", MBTIS, index=MBTIS.index("ENTP"), key="B")
-    if st.button("비교하기"):
-        ra, rb = DATA[a], DATA[b]
-        st.write(f"- {a} 핵심: {ra['요약']}")
-        st.write(f"- {b} 핵심: {rb['요약']}")
-        st.write("공통점: 논리/아이디어 지향(정도 차이 있음). 차이: A는 구조·내면 탐구, B는 상호작용·실험을 선호.")
+# 요약 카드
+st.markdown('<div class="section-title">요약</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="gradient-card">{info["요약"]}</div>', unsafe_allow_html=True)
 
-if __name__ == "__main__":
-    main()
+# 3열 카드: 특징 / 추천 직업 / 인간관계 팁
+st.markdown('<hr/>', unsafe_allow_html=True)
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.markdown('<div class="section-title">특징</div>', unsafe_allow_html=True)
+    st.markdown('<div class="gradient-card">', unsafe_allow_html=True)
+    if reveal:
+        for t in info["특징"]:
+            st.markdown(f'<span class="tag">✨ {t}</span>', unsafe_allow_html=True)
+    else:
+        st.write("• " + " / ".join(info["특징"][:3]))
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with c2:
+    st.markdown('<div class="section-title">추천 직업</div>', unsafe_allow_html=True)
+    st.markdown('<div class="gradient-card">', unsafe_allow_html=True)
+    for job in info["추천직업"]:
+        st.markdown(f'<span class="tag">💼 {job}</span>', unsafe_allow_html=True)
+    st.caption("참고: 진로는 개인의 역량·경험·가치에 따라 달라집니다.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with c3:
+    st.markdown('<div class="section-title">인간관계 팁</div>', unsafe_allow_html=True)
+    st.markdown('<div class="gradient-card">', unsafe_allow_html=True)
+    for tip in info["관계팁"]:
+        st.markdown(f'<span class="tag">🤝 {tip}</span>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# 공부 팁 섹션
+st.markdown('<hr/>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">공부/시간관리</div>', unsafe_allow_html=True)
+st.markdown('<div class="gradient-card">', unsafe_allow_html=True)
+for tip in info["공부팁"]:
+    st.markdown(f'<span class="tag">📚 {tip}</span>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+# 하단 액션
+st.markdown('<hr/>', unsafe_allow_html=True)
+colA, colB = st.columns([1,2])
+with colA:
+    st.markdown('<div class="section-title">테마 액션</div>', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="cute-button">', unsafe_allow_html=True)
+        st.button("🌟 반짝 모드")
+        st.markdown('</div>', unsafe_allow_html=True)
+with colB:
+    st.caption("팁: 컬러와 이모지는 집중을 방해하지 않도록 섹션별 대비를 유지하세요.")
+
