@@ -564,3 +564,4 @@ if st.session_state.get("__go_timer"):
 if st.session_state.get("__go_shop"):
     st.session_state.__go_shop = False
     st.info("상단의 '상점' 탭을 눌러 이동해 주세요.")
+tab_home, tab_timer, tab_stats, tab_guild, tab_shop = st.tabs(["홈", "타이머", "통계", "길드", "상점"])
