@@ -3,7 +3,7 @@ import datetime as dt
 import uuid
 import sqlite3
 import hashlib
-import hmac  # 안전한 비교
+import hmac
 import os
 from contextlib import closing
 
@@ -149,6 +149,7 @@ def init_db():
 def get_conn():
     return sqlite3.connect(APP_DB)
 
+# DB는 가장 먼저 초기화
 init_db()
 
 # ===============================
@@ -243,10 +244,11 @@ def ensure_today():
             conn.commit()
 
 def get_daily():
-    ensure_today()
     uid = st.session_state.user_id
+    # 로그인 전에는 DB 접근하지 않음
     if not uid:
         return dict(date=TODAY, goal_min=120, coins=0, streak=0, theme="핑크", sound="벨", mascot="여우")
+    ensure_today()
     with closing(get_conn()) as conn:
         df = pd.read_sql_query("SELECT * FROM daily WHERE date=? AND user_id=?", conn, params=(TODAY, uid))
     if df.empty:
@@ -486,7 +488,16 @@ def apply_theme(theme_name):
     """
     st.markdown(css, unsafe_allow_html=True)
 
-apply_theme(get_daily()["theme"])
+# 로그인 여부에 따라 안전하게 테마 적용
+if st.session_state.user_id:
+    try:
+        d_for_theme = get_daily()
+        apply_theme(d_for_theme["theme"])
+    except Exception:
+        # 예외 시 기본 테마 적용
+        apply_theme("핑크")
+else:
+    apply_theme("핑크")
 
 # ===============================
 # 사이드바
@@ -497,8 +508,8 @@ if st.session_state.user_id:
 else:
     st.sidebar.info("로그인하지 않으셨습니다.")
 
-d_side = get_daily()
 if st.session_state.user_id:
+    d_side = get_daily()
     new_goal = st.sidebar.slider("오늘 목표(분)", min_value=30, max_value=600, step=10, value=d_side["goal_min"], key="sb_goal_slider")
     if new_goal != d_side["goal_min"]:
         update_daily(goal=new_goal)
