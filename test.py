@@ -3,6 +3,7 @@ import datetime as dt
 import uuid
 import sqlite3
 import hashlib
+import hmac  # ← 안전 비교용
 import os
 from contextlib import closing
 
@@ -27,11 +28,177 @@ def hash_password(password: str, salt: bytes = None) -> tuple[str, bytes]:
     return dk.hex(), salt
 
 def verify_password(password: str, hashed_hex: str, salt: bytes) -> bool:
+    # sqlite가 memoryview로 반환하는 경우를 대비
+    if isinstance(salt, memoryview):
+        salt = salt.tobytes()
     dk_check, _ = hash_password(password, salt)
-    return hashlib.compare_digest(dk_check, hashed_hex)
+    return hmac.compare_digest(dk_check, hashed_hex)
 
 # ===============================
 # rerun 호환 유틸
+# ===============================
+def safe_rerun():
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:
+        st.experimental_rerun()
+
+# ===============================
+# DB 초기화
+# ===============================
+def init_db():
+    with closing(sqlite3.connect(APP_DB)) as conn:
+        c = conn.cursor()
+        # 사용자 계정
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS users(
+            id TEXT PRIMARY KEY,
+            email TEXT UNIQUE,
+            username TEXT UNIQUE,
+            pw_hash TEXT,
+            pw_salt BLOB,
+            created_at TEXT
+        );
+        """)
+        # 하루 상태(유저별)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS daily(
+            date TEXT,
+            user_id TEXT,
+            goal_min INTEGER,
+            coins INTEGER,
+            streak INTEGER,
+            theme TEXT,
+            sound TEXT,
+            mascot TEXT,
+            PRIMARY KEY(date, user_id)
+        );
+        """)
+        # 공부 세션 로그(유저별)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS sessions(
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            date TEXT,
+            subject TEXT,
+            duration_min INTEGER,
+            distractions INTEGER,
+            mood TEXT,
+            energy INTEGER,
+            difficulty INTEGER
+        );
+        """)
+        # 보유 아이템(유저별)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS inventory(
+            item_id TEXT PRIMARY KEY,
+            user_id TEXT,
+            item_type TEXT,
+            name TEXT
+        );
+        """)
+        # 보상/구매 로그(유저별)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS rewards(
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            date TEXT,
+            type TEXT,
+            name TEXT,
+            coins_change INTEGER
+        );
+        """)
+        # 길드(샘플) + 내 길드(유저별)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS guild(
+            id TEXT PRIMARY KEY,
+            name TEXT
+        );
+        """)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS my_guild(
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            name TEXT
+        );
+        """)
+        # 사용자 정의 과목(유저별)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS subjects(
+            name TEXT,
+            user_id TEXT,
+            PRIMARY KEY (name, user_id)
+        );
+        """)
+        # 투두리스트(유저별)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS todos(
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            title TEXT,
+            subject TEXT,
+            due_date TEXT,
+            estimated_min INTEGER,
+            priority INTEGER,
+            is_done INTEGER,
+            done_at TEXT,
+            reward_coins INTEGER
+        );
+        """)
+        conn.commit()
+
+def get_conn():
+    return sqlite3.connect(APP_DB)
+
+init_db()
+
+# ===============================
+# 세션 상태
+# ===============================
+if "user_id" not in st.session_state:
+    st.session_state.user_id = None
+if "### 안내
+사용자님, 앞서 발생한 AttributeError의 원인(verify_password에서 hashlib.compare_digest 사용)을 반영해 hmac.compare_digest로 수정했고, 위젯 중복 오류 방지를 위한 고유 key도 전면 적용했습니다. 회원가입/로그인 + 상단 내비 + 투두리스트(완료 시 코인 지급) + 타이머 + 상점(이미 구매함 배지)까지 모두 포함한 “붙여넣기용 완성본”입니다. 그대로 교체해 실행하시면 됩니다.
+
+```python
+import time
+import datetime as dt
+import uuid
+import sqlite3
+import hashlib
+import hmac  # 중요: 안전 비교는 hmac.compare_digest 사용
+import os
+from contextlib import closing
+
+import pandas as pd
+import streamlit as st
+
+# ===============================
+# 기본 설정
+# ===============================
+st.set_page_config(page_title="수능 러닝 메이트+", page_icon="EMOJI_0", layout="wide")
+
+APP_DB = "study_mate_subjectless.db"
+TODAY = dt.date.today().isoformat()
+
+# ===============================
+# 비밀번호 해시/검증 유틸
+# ===============================
+def hash_password(password: str, salt: bytes = None) -> tuple[str, bytes]:
+    if salt is None:
+        salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+    return dk.hex(), salt
+
+def verify_password(password: str, hashed_hex: str, salt: bytes) -> bool:
+    # sqlite에서 BLOB 꺼낼 때 memoryview로 나올 수 있어 방어적으로 bytes 캐스팅
+    if isinstance(salt, memoryview):
+        salt = salt.tobytes()
+    dk_check, _ = hash_password(password, salt)
+    return hmac.compare_digest(dk_check, hashed_hex)
+
+# ===============================
+# rerun 유틸
 # ===============================
 def safe_rerun():
     if hasattr(st, "rerun"):
@@ -520,19 +687,19 @@ st.markdown("<div class='topbar'>", unsafe_allow_html=True)
 if st.session_state.user_id:
     c_nav1, c_nav2, c_nav3, c_nav4, c_nav5, c_nav6, c_sp = st.columns([1,1,1,1,1,1,4])
     with c_nav1:
-        if st.button("🏠 홈", key="top_home"):
+        if st.button("EMOJI_0 홈", key="top_home"):
             st.session_state.active_tab = TAB_HOME; safe_rerun()
     with c_nav2:
-        if st.button("📝 투두", key="top_todo"):
+        if st.button("EMOJI_1 투두", key="top_todo"):
             st.session_state.active_tab = TAB_TODO; safe_rerun()
     with c_nav3:
         if st.button("⏱ 타이머", key="top_timer"):
             st.session_state.active_tab = TAB_TIMER; safe_rerun()
     with c_nav4:
-        if st.button("📊 통계", key="top_stats"):
+        if st.button("EMOJI_2 통계", key="top_stats"):
             st.session_state.active_tab = TAB_STATS; safe_rerun()
     with c_nav5:
-        if st.button("🛒 상점", key="top_shop"):
+        if st.button("EMOJI_3 상점", key="top_shop"):
             st.session_state.active_tab = TAB_SHOP; safe_rerun()
     with c_nav6:
         if st.button("로그아웃", key="top_logout"):
@@ -935,7 +1102,7 @@ def render_todo():
                     st.toast("삭제되었습니다.")
                     safe_rerun()
             with col7:
-                st.write("✅" if done else "🕒")
+                st.write("✅" if done else "EMOJI_4")
 
     # 편집 섹션
     if "edit_id" in st.session_state and st.session_state.edit_id:
@@ -997,7 +1164,6 @@ def render_shop():
             if owned:
                 st.markdown("<div class='badge-owned'>이미 구매함</div>", unsafe_allow_html=True)
             else:
-                # 구매 버튼은 이름 기반 고유 key 이미 사용
                 if st.button("구매", key=f"buy_{item['type']}_{item['name']}"):
                     d_now = get_daily()
                     if d_now["coins"] < item["price"]:
