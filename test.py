@@ -157,6 +157,9 @@ init_db()
 # ===============================
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
+if "### 안내
+사용자님, 앞서 발생한 AttributeError의 원인(verify_password에서 hashlib.compare_digest 사용)을 반영해 hmac.compare_digest로 수정했고, 위젯 중복 오류 방지를 위한 고유 key도 전면 적용했습니다. 회원가입/로그인 + 상단 내비 + 투두리스트(완료 시 코인 지급) + 타이머 + 상점(이미 구매함 배지)까지 모두 포함한 “붙여넣기용 완성본”입니다. 그대로 교체해 실행하시면 됩니다.
+
 ```python
 import time
 import datetime as dt
@@ -684,19 +687,19 @@ st.markdown("<div class='topbar'>", unsafe_allow_html=True)
 if st.session_state.user_id:
     c_nav1, c_nav2, c_nav3, c_nav4, c_nav5, c_nav6, c_sp = st.columns([1,1,1,1,1,1,4])
     with c_nav1:
-        if st.button("EMOJI_0 홈", key="top_home"):
+        if st.button("🏠 홈", key="top_home"):
             st.session_state.active_tab = TAB_HOME; safe_rerun()
     with c_nav2:
-        if st.button("EMOJI_1 투두", key="top_todo"):
+        if st.button("📝 투두", key="top_todo"):
             st.session_state.active_tab = TAB_TODO; safe_rerun()
     with c_nav3:
         if st.button("⏱ 타이머", key="top_timer"):
             st.session_state.active_tab = TAB_TIMER; safe_rerun()
     with c_nav4:
-        if st.button("EMOJI_2 통계", key="top_stats"):
+        if st.button("📊 통계", key="top_stats"):
             st.session_state.active_tab = TAB_STATS; safe_rerun()
     with c_nav5:
-        if st.button("EMOJI_3 상점", key="top_shop"):
+        if st.button("🛒 상점", key="top_shop"):
             st.session_state.active_tab = TAB_SHOP; safe_rerun()
     with c_nav6:
         if st.button("로그아웃", key="top_logout"):
@@ -1099,7 +1102,7 @@ def render_todo():
                     st.toast("삭제되었습니다.")
                     safe_rerun()
             with col7:
-                st.write("✅" if done else "EMOJI_4")
+                st.write("✅" if done else "🕒")
 
     # 편집 섹션
     if "edit_id" in st.session_state and st.session_state.edit_id:
