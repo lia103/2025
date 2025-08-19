@@ -157,9 +157,6 @@ init_db()
 # ===============================
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
-if "### 안내
-사용자님, 앞서 발생한 AttributeError의 원인(verify_password에서 hashlib.compare_digest 사용)을 반영해 hmac.compare_digest로 수정했고, 위젯 중복 오류 방지를 위한 고유 key도 전면 적용했습니다. 회원가입/로그인 + 상단 내비 + 투두리스트(완료 시 코인 지급) + 타이머 + 상점(이미 구매함 배지)까지 모두 포함한 “붙여넣기용 완성본”입니다. 그대로 교체해 실행하시면 됩니다.
-
 ```python
 import time
 import datetime as dt
