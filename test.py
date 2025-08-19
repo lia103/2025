@@ -596,3 +596,5 @@ with tab_shop:
             st.success(f"마스코트 '{mascot_to_apply}'로 설정되었어요! 타이머 화면에 표시됩니다.")
     else:
         st.caption("마스코트를 하나 구매하면 타이머 화면에 귀여운 이모지가 표시돼요.")
+    
+tab_home, tab_timer, tab_stats, tab_guild, tab_shop = st.tabs(["홈", "타이머", "통계", "길드", "상점"])
