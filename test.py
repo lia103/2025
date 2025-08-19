@@ -12,7 +12,7 @@ import streamlit as st
 # ===============================
 st.set_page_config(page_title="수능 러닝 메이트+", page_icon="EMOJI_0", layout="wide")
 
-APP_DB = "study_mate_final.db"
+APP_DB = "study_mate_subjectless.db"
 TODAY = dt.date.today().isoformat()
 
 # ===============================
@@ -22,7 +22,6 @@ def safe_rerun():
     if hasattr(st, "rerun"):
         st.rerun()
     else:
-        # 구버전 호환
         st.experimental_rerun()
 
 # ===============================
@@ -31,6 +30,7 @@ def safe_rerun():
 def init_db():
     with closing(sqlite3.connect(APP_DB)) as conn:
         c = conn.cursor()
+        # 하루 상태(목표/코인/스트릭/현재 장착 아이템)
         c.execute("""
         CREATE TABLE IF NOT EXISTS daily(
             date TEXT PRIMARY KEY,
@@ -42,6 +42,7 @@ def init_db():
             mascot TEXT
         );
         """)
+        # 공부 세션 로그
         c.execute("""
         CREATE TABLE IF NOT EXISTS sessions(
             id TEXT PRIMARY KEY,
@@ -54,6 +55,7 @@ def init_db():
             difficulty INTEGER
         );
         """)
+        # 보유 아이템
         c.execute("""
         CREATE TABLE IF NOT EXISTS inventory(
             item_id TEXT PRIMARY KEY,
@@ -61,6 +63,7 @@ def init_db():
             name TEXT
         );
         """)
+        # 보상/구매 로그
         c.execute("""
         CREATE TABLE IF NOT EXISTS rewards(
             id TEXT PRIMARY KEY,
@@ -70,6 +73,7 @@ def init_db():
             coins_change INTEGER
         );
         """)
+        # 길드(로컬 모의 데이터)
         c.execute("""
         CREATE TABLE IF NOT EXISTS guild(
             id TEXT PRIMARY KEY,
@@ -80,6 +84,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS my_guild(
             id TEXT PRIMARY KEY,
             name TEXT
+        );
+        """)
+        # 사용자 정의 과목(초기 시드 없음)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS subjects(
+            name TEXT PRIMARY KEY
         );
         """)
         conn.commit()
@@ -99,12 +109,12 @@ if "end_time" not in st.session_state:
 if "preset" not in st.session_state:
     st.session_state.preset = 25
 if "subject" not in st.session_state:
-    st.session_state.subject = "국어"
+    st.session_state.subject = None  # 과목 시드 없음
 if "distractions" not in st.session_state:
     st.session_state.distractions = 0
 
 # ===============================
-# 초기 상태 보장
+# 초기 상태 보장(daily)
 # ===============================
 def ensure_today():
     with closing(get_conn()) as conn:
@@ -152,6 +162,9 @@ def update_daily(goal=None, coins_delta=0, theme=None, sound=None, mascot=None, 
                   (TODAY, goal_min, coins, streak, theme, sound, mascot))
         conn.commit()
 
+# ===============================
+# 세션/보상 로직
+# ===============================
 def add_session(subject, duration_min, distractions, mood, energy, difficulty):
     with closing(get_conn()) as conn:
         c = conn.cursor()
@@ -187,6 +200,38 @@ def get_weekly():
             ORDER BY date ASC
         """, conn)
     return df.tail(7) if not df.empty else df
+
+# ===============================
+# 과목 관리(사용자 입력 기반)
+# ===============================
+def get_subjects() -> list:
+    with closing(get_conn()) as conn:
+        df = pd.read_sql_query("SELECT name FROM subjects ORDER BY name ASC", conn)
+    return df["name"].tolist() if not df.empty else []
+
+def add_subject(name: str) -> bool:
+    name = (name or "").strip()
+    if not name:
+        return False
+    with closing(get_conn()) as conn:
+        c = conn.cursor()
+        try:
+            c.execute("INSERT INTO subjects(name) VALUES(?)", (name,))
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            # 이미 존재
+            return False
+
+def remove_subject(name: str) -> bool:
+    name = (name or "").strip()
+    if not name:
+        return False
+    with closing(get_conn()) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM subjects WHERE name=?", (name,))
+        conn.commit()
+    return True
 
 # ===============================
 # 상점/인벤토리/테마
@@ -334,10 +379,45 @@ with tab_home:
 
 # 타이머 탭
 with tab_timer:
-    d = get_daily()
-    st.header(f"포모도로 타이머 • 마스코트: {d['mascot']}")
-    st.caption("마스코트는 상점에서 변경할 수 있어요.")
+    st.header("포모도로 타이머")
 
+    # 과목 관리 섹션(사용자 추가/삭제)
+    st.subheader("과목 관리")
+    col_add, col_del = st.columns([2,2])
+    with col_add:
+        new_subj = st.text_input("새 과목 추가", placeholder="예: 수학 II")
+        if st.button("과목 추가"):
+            if add_subject(new_subj):
+                st.success(f"'{new_subj}' 과목이 추가되었어요.")
+                safe_rerun()
+            else:
+                st.warning("과목명이 비었거나 이미 존재합니다.")
+    with col_del:
+        existing = get_subjects()
+        del_choice = st.selectbox("삭제할 과목 선택", ["(선택)"] + existing, index=0)
+        if st.button("과목 삭제"):
+            if del_choice != "(선택)" and remove_subject(del_choice):
+                st.success(f"'{del_choice}' 과목을 삭제했어요.")
+                # 현재 선택한 과목이 삭제되었을 수 있으니 초기화
+                if st.session_state.subject == del_choice:
+                    st.session_state.subject = None
+                safe_rerun()
+            else:
+                st.warning("삭제할 과목을 선택해 주세요.")
+
+    st.markdown("---")
+
+    # 현재 등록된 과목으로 선택 박스 구성
+    subjects = get_subjects()
+    if not subjects:
+        st.info("등록된 과목이 없습니다. 위에서 과목을 먼저 추가해 주세요.")
+    else:
+        # 이전 선택 과목이 삭제되었을 수 있으니 검증
+        if st.session_state.subject not in subjects:
+            st.session_state.subject = subjects[0]
+        st.session_state.subject = st.selectbox("과목", subjects, index=subjects.index(st.session_state.subject))
+
+    # 타이머 컨트롤
     colA, colB, colC, colD = st.columns(4)
     with colA:
         if st.button("25분"): st.session_state.preset = 25
@@ -348,15 +428,13 @@ with tab_timer:
     with colD:
         st.session_state.preset = st.number_input("커스텀(분)", min_value=10, max_value=120, value=st.session_state.preset, step=5)
 
-    st.session_state.subject = st.selectbox("과목", ["국어","수학","영어","탐구-사탐","탐구-과탐","한국사","기타"], index=0)
-
     t1, t2, t3 = st.columns(3)
     with t1:
-        if not st.session_state.timer_running and st.button("시작 ▶"):
+        if (not st.session_state.timer_running) and subjects and st.button("시작 ▶"):
             st.session_state.timer_running = True
             st.session_state.end_time = time.time() + st.session_state.preset * 60
             st.session_state.distractions = 0
-            st.toast(f"타이머 시작! 종료 사운드: {d['sound']}")
+            st.toast("타이머 시작! 종료 시 회고를 기록해 코인을 받아요.")
     with t2:
         if st.session_state.timer_running and st.button("일시정지 ⏸"):
             st.session_state.timer_running = False
@@ -364,19 +442,18 @@ with tab_timer:
         if st.session_state.timer_running and st.button("방해 +1"):
             st.session_state.distractions += 1
 
-    # 카운트다운 표시 및 1초 갱신
+    # 카운트다운
     timer_placeholder = st.empty()
     if st.session_state.timer_running and (st.session_state.end_time is not None):
         remaining = int(st.session_state.end_time - time.time())
         if remaining <= 0:
             st.session_state.timer_running = False
-            st.success("세션 완료! 회고를 기록해 볼까요?")
+            st.success("세션 완료! 아래에서 회고를 기록해 코인을 받아요.")
         else:
             mm, ss = divmod(remaining, 60)
-            mascot_emoji = {"여우":"EMOJI_2","곰":"EMOJI_3","올빼미":"EMOJI_4"}.get(d["mascot"], "✨")
             timer_placeholder.markdown(
-                f"<div class='card'><h3>{mascot_emoji} 남은 시간: {mm:02d}:{ss:02d}</h3>"
-                f"<div class='small'>집중! 휴대폰은 잠시 멀리 EMOJI_5</div></div>",
+                f"<div class='card'><h3>남은 시간: {mm:02d}:{ss:02d}</h3>"
+                f"<div class='small'>집중! 휴대폰은 잠시 멀리 EMOJI_2</div></div>",
                 unsafe_allow_html=True
             )
             time.sleep(1)
@@ -385,22 +462,23 @@ with tab_timer:
     # 회고 폼(세션 종료 후)
     def reflection_form(duration_min):
         with st.form("reflection"):
-            st.write(f"이번 세션: {st.session_state.subject} • {duration_min}분 • 방해 {st.session_state.distractions}회")
-            mood = st.radio("기분", ["EMOJI_6 좋음","EMOJI_7 보통","EMOJI_8 낮음"], horizontal=True)
+            st.write(f"이번 세션: {st.session_state.subject if st.session_state.subject else '(과목 미선택)'} • {duration_min}분 • 방해 {st.session_state.distractions}회")
+            mood = st.radio("기분", ["EMOJI_3 좋음","EMOJI_4 보통","EMOJI_5 낮음"], horizontal=True)
             energy = st.slider("에너지", 1, 5, 3)
             difficulty = st.slider("난이도", 1, 5, 3)
             submitted = st.form_submit_button("저장하고 코인 받기")
             if submitted:
-                add_session(st.session_state.subject, duration_min,
+                subject_to_save = st.session_state.subject if st.session_state.subject else "(미지정)"
+                add_session(subject_to_save, duration_min,
                             st.session_state.distractions, mood, energy, difficulty)
                 bonus = 10 if st.session_state.distractions <= 1 else 0
                 grant_coins(base=10, bonus=bonus, reason="세션 완료")
-                st.session_state.timer_running = False  # 충돌 방지
+                st.session_state.timer_running = False
                 st.success(f"기록 완료! +{10+bonus}코인 지급")
                 st.balloons()
                 safe_rerun()
 
-    # 종료 감지(안전 가드) → 사진의 409~410줄 대체
+    # 종료 감지(안전 가드)
     end_time = st.session_state.end_time
     if (st.session_state.timer_running is False) and (end_time is not None) and ((end_time - time.time()) <= 0):
         reflection_form(st.session_state.preset)
