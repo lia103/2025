@@ -43,7 +43,7 @@ def safe_rerun():
         st.experimental_rerun()
 
 # ===============================
-# DB 초기화
+# DB 초기화(최우선)
 # ===============================
 def init_db():
     with closing(sqlite3.connect(APP_DB)) as conn:
@@ -149,7 +149,6 @@ def init_db():
 def get_conn():
     return sqlite3.connect(APP_DB)
 
-# DB는 가장 먼저 초기화
 init_db()
 
 # ===============================
@@ -245,8 +244,8 @@ def ensure_today():
 
 def get_daily():
     uid = st.session_state.user_id
-    # 로그인 전에는 DB 접근하지 않음
     if not uid:
+        # 로그인 전에는 DB 접근하지 않음
         return dict(date=TODAY, goal_min=120, coins=0, streak=0, theme="핑크", sound="벨", mascot="여우")
     ensure_today()
     with closing(get_conn()) as conn:
@@ -279,8 +278,7 @@ def update_daily(goal=None, coins_delta=0, theme=None, sound=None, mascot=None, 
     with closing(get_conn()) as conn:
         c = conn.cursor()
         c.execute("""REPLACE INTO daily(date, user_id, goal_min, coins, streak, theme, sound, mascot)
-                     VALUES(?,?,?,?,?,?,?,?)""",
-                  (TODAY, uid, goal_min, coins, streak, theme, sound, mascot))
+                     VALUES(?,?,?,?,?,?,?,?)""", (TODAY, uid, goal_min, coins, streak, theme, sound, mascot))
         conn.commit()
 
 # ===============================
@@ -488,13 +486,12 @@ def apply_theme(theme_name):
     """
     st.markdown(css, unsafe_allow_html=True)
 
-# 로그인 여부에 따라 안전하게 테마 적용
+# 로그인 여부에 따른 안전한 테마 적용
 if st.session_state.user_id:
     try:
         d_for_theme = get_daily()
         apply_theme(d_for_theme["theme"])
     except Exception:
-        # 예외 시 기본 테마 적용
         apply_theme("핑크")
 else:
     apply_theme("핑크")
@@ -516,8 +513,9 @@ if st.session_state.user_id:
         st.toast("오늘의 목표가 업데이트되었어요!")
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown(f"보유 코인: {get_daily()['coins']} • 스트릭: {get_daily()['streak']}일")
-    st.sidebar.caption(f"현재 테마: {get_daily()['theme']} • 사운드: {get_daily()['sound']} • 마스코트: {get_daily()['mascot']}")
+    d_now = get_daily()
+    st.sidebar.markdown(f"보유 코인: {d_now['coins']} • 스트릭: {d_now['streak']}일")
+    st.sidebar.caption(f"현재 테마: {d_now['theme']} • 사운드: {d_now['sound']} • 마스코트: {d_now['mascot']}")
 
 nav_items = [TAB_AUTH] if not st.session_state.user_id else [TAB_HOME, TAB_TODO, TAB_TIMER, TAB_STATS, TAB_GUILD, TAB_SHOP]
 nav_choice = st.sidebar.radio("빠른 이동", nav_items,
@@ -534,19 +532,19 @@ st.markdown("<div class='topbar'>", unsafe_allow_html=True)
 if st.session_state.user_id:
     c_nav1, c_nav2, c_nav3, c_nav4, c_nav5, c_nav6, c_sp = st.columns([1,1,1,1,1,1,4])
     with c_nav1:
-        if st.button("🏠 홈", key="top_home"):
+        if st.button("EMOJI_0 홈", key="top_home"):
             st.session_state.active_tab = TAB_HOME; safe_rerun()
     with c_nav2:
-        if st.button("📝 투두", key="top_todo"):
+        if st.button("EMOJI_1 투두", key="top_todo"):
             st.session_state.active_tab = TAB_TODO; safe_rerun()
     with c_nav3:
         if st.button("⏱ 타이머", key="top_timer"):
             st.session_state.active_tab = TAB_TIMER; safe_rerun()
     with c_nav4:
-        if st.button("📊 통계", key="top_stats"):
+        if st.button("EMOJI_2 통계", key="top_stats"):
             st.session_state.active_tab = TAB_STATS; safe_rerun()
     with c_nav5:
-        if st.button("🛒 상점", key="top_shop"):
+        if st.button("EMOJI_3 상점", key="top_shop"):
             st.session_state.active_tab = TAB_SHOP; safe_rerun()
     with c_nav6:
         if st.button("로그아웃", key="top_logout"):
@@ -637,7 +635,7 @@ def render_stats():
     require_login()
     st.header("주간 통계")
     weekly = get_weekly()
-    if weekly is not None and not weekly.empty:
+    if not weekly.empty:
         chart_df = weekly.set_index("date")
         st.bar_chart(chart_df)
     else:
@@ -949,7 +947,7 @@ def render_todo():
                     st.toast("삭제되었습니다.")
                     safe_rerun()
             with col7:
-                st.write("✅" if done else "🕒")
+                st.write("✅" if done else "EMOJI_4")
 
     # 편집 섹션
     if "edit_id" in st.session_state and st.session_state.edit_id:
