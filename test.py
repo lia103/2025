@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 # ===============================
-# 기본 설정: 단일 사용자 / 로그인 없음
+# 기본 설정
 # ===============================
 st.set_page_config(page_title="수능 러닝 메이트+", page_icon="EMOJI_0", layout="wide")
 
@@ -16,7 +16,7 @@ APP_DB = "study_mate_subjectless.db"
 TODAY = dt.date.today().isoformat()
 
 # ===============================
-# rerun 호환 유틸(버전 무관)
+# rerun 호환 유틸
 # ===============================
 def safe_rerun():
     if hasattr(st, "rerun"):
@@ -30,7 +30,7 @@ def safe_rerun():
 def init_db():
     with closing(sqlite3.connect(APP_DB)) as conn:
         c = conn.cursor()
-        # 하루 상태(목표/코인/스트릭/현재 장착 아이템)
+        # 하루 상태
         c.execute("""
         CREATE TABLE IF NOT EXISTS daily(
             date TEXT PRIMARY KEY,
@@ -73,7 +73,7 @@ def init_db():
             coins_change INTEGER
         );
         """)
-        # 길드(로컬 모의 데이터)
+        # 길드(로컬 모드)
         c.execute("""
         CREATE TABLE IF NOT EXISTS guild(
             id TEXT PRIMARY KEY,
@@ -86,10 +86,24 @@ def init_db():
             name TEXT
         );
         """)
-        # 사용자 정의 과목(초기 시드 없음)
+        # 사용자 정의 과목
         c.execute("""
         CREATE TABLE IF NOT EXISTS subjects(
             name TEXT PRIMARY KEY
+        );
+        """)
+        # 투두리스트(공부 계획)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS todos(
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            subject TEXT,
+            due_date TEXT,
+            estimated_min INTEGER,
+            priority INTEGER,
+            is_done INTEGER,
+            done_at TEXT,
+            reward_coins INTEGER
         );
         """)
         conn.commit()
@@ -100,7 +114,7 @@ def get_conn():
 init_db()
 
 # ===============================
-# 세션 상태 선제 초기화(탭/UI 렌더 전)
+# 세션 상태
 # ===============================
 if "timer_running" not in st.session_state:
     st.session_state.timer_running = False
@@ -109,22 +123,23 @@ if "end_time" not in st.session_state:
 if "preset" not in st.session_state:
     st.session_state.preset = 25
 if "subject" not in st.session_state:
-    st.session_state.subject = None  # 과목 시드 없음
+    st.session_state.subject = None
 if "distractions" not in st.session_state:
     st.session_state.distractions = 0
 
-# 내비게이션 상태
+# 내비게이션 탭
 TAB_HOME = "홈"
 TAB_TIMER = "타이머"
 TAB_STATS = "통계"
 TAB_GUILD = "길드"
 TAB_SHOP = "상점"
+TAB_TODO = "투두리스트"
 
 if "active_tab" not in st.session_state:
     st.session_state.active_tab = TAB_HOME
 
 # ===============================
-# 초기 상태 보장(daily)
+# Daily 상태 보장
 # ===============================
 def ensure_today():
     with closing(get_conn()) as conn:
@@ -212,7 +227,7 @@ def get_weekly():
     return df.tail(7) if not df.empty else df
 
 # ===============================
-# 과목 관리(사용자 입력 기반)
+# 과목 관리
 # ===============================
 def get_subjects() -> list:
     with closing(get_conn()) as conn:
@@ -230,7 +245,6 @@ def add_subject(name: str) -> bool:
             conn.commit()
             return True
         except sqlite3.IntegrityError:
-            # 이미 존재
             return False
 
 def remove_subject(name: str) -> bool:
@@ -336,11 +350,10 @@ def apply_theme(theme_name):
     """
     st.markdown(css, unsafe_allow_html=True)
 
-# 현재 테마 적용
 apply_theme(get_daily()["theme"])
 
 # ===============================
-# 사이드바(공통)
+# 사이드바
 # ===============================
 st.sidebar.title("수능 러닝 메이트+")
 d_side = get_daily()
@@ -353,12 +366,10 @@ st.sidebar.markdown("---")
 st.sidebar.markdown(f"보유 코인: {get_daily()['coins']} • 스트릭: {get_daily()['streak']}일")
 st.sidebar.caption(f"현재 테마: {get_daily()['theme']} • 사운드: {get_daily()['sound']} • 마스코트: {get_daily()['mascot']}")
 
-# 사이드바 빠른 이동(선택)
 nav_choice = st.sidebar.radio(
     "빠른 이동",
-    [TAB_HOME, TAB_TIMER, TAB_STATS, TAB_GUILD, TAB_SHOP],
-    index=[TAB_HOME, TAB_TIMER, TAB_STATS, TAB_GUILD, TAB_SHOP].index(st.session_state.active_tab),
-    horizontal=False
+    [TAB_HOME, TAB_TODO, TAB_TIMER, TAB_STATS, TAB_GUILD, TAB_SHOP],
+    index=[TAB_HOME, TAB_TODO, TAB_TIMER, TAB_STATS, TAB_GUILD, TAB_SHOP].index(st.session_state.active_tab),
 )
 if nav_choice != st.session_state.active_tab:
     st.session_state.active_tab = nav_choice
@@ -368,27 +379,31 @@ if nav_choice != st.session_state.active_tab:
 # 상단바 내비게이션
 # ===============================
 st.markdown("<div class='topbar'>", unsafe_allow_html=True)
-c_nav1, c_nav2, c_nav3, c_nav4, c_nav_sp = st.columns([1,1,1,1,6])
+c_nav1, c_nav2, c_nav3, c_nav4, c_nav5, c_nav_sp = st.columns([1,1,1,1,1,5])
 with c_nav1:
     if st.button("EMOJI_0 홈"):
         st.session_state.active_tab = TAB_HOME
         safe_rerun()
 with c_nav2:
+    if st.button("EMOJI_1 투두"):
+        st.session_state.active_tab = TAB_TODO
+        safe_rerun()
+with c_nav3:
     if st.button("⏱ 타이머"):
         st.session_state.active_tab = TAB_TIMER
         safe_rerun()
-with c_nav3:
-    if st.button("EMOJI_1 통계"):
+with c_nav4:
+    if st.button("EMOJI_2 통계"):
         st.session_state.active_tab = TAB_STATS
         safe_rerun()
-with c_nav4:
-    if st.button("EMOJI_2 상점"):
+with c_nav5:
+    if st.button("EMOJI_3 상점"):
         st.session_state.active_tab = TAB_SHOP
         safe_rerun()
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ===============================
-# 공통 컴포넌트
+# 공통 화면들
 # ===============================
 def render_home():
     st.title("오늘의 공부, 충분히 멋져요! ✨")
@@ -468,7 +483,7 @@ def render_guild():
 def render_timer():
     st.header("포모도로 타이머")
 
-    # 과목 관리 섹션(사용자 추가/삭제)
+    # 과목 관리
     st.subheader("과목 관리")
     col_add, col_del = st.columns([2,2])
     with col_add:
@@ -485,7 +500,6 @@ def render_timer():
         if st.button("과목 삭제"):
             if del_choice != "(선택)" and remove_subject(del_choice):
                 st.success(f"'{del_choice}' 과목을 삭제했어요.")
-                # 현재 선택한 과목이 삭제되었을 수 있으니 초기화
                 if st.session_state.subject == del_choice:
                     st.session_state.subject = None
                 safe_rerun()
@@ -494,17 +508,16 @@ def render_timer():
 
     st.markdown("---")
 
-    # 현재 등록된 과목으로 선택 박스 구성
+    # 과목 선택
     subjects = get_subjects()
     if not subjects:
         st.info("등록된 과목이 없습니다. 위에서 과목을 먼저 추가해 주세요.")
     else:
-        # 이전 선택 과목이 삭제되었을 수 있으니 검증
         if st.session_state.subject not in subjects:
             st.session_state.subject = subjects[0]
         st.session_state.subject = st.selectbox("과목", subjects, index=subjects.index(st.session_state.subject))
 
-    # 타이머 컨트롤
+    # 타이머 프리셋
     colA, colB, colC, colD = st.columns(4)
     with colA:
         if st.button("25분"): st.session_state.preset = 25
@@ -546,7 +559,7 @@ def render_timer():
             time.sleep(1)
             safe_rerun()
 
-    # 회고 폼(세션 종료 후)
+    # 회고 폼
     def reflection_form(duration_min):
         with st.form("reflection"):
             st.write(f"이번 세션: {st.session_state.subject if st.session_state.subject else '(과목 미선택)'} • {duration_min}분 • 방해 {st.session_state.distractions}회")
@@ -565,10 +578,213 @@ def render_timer():
                 st.balloons()
                 safe_rerun()
 
-    # 종료 감지(안전 가드)
     end_time = st.session_state.end_time
     if (st.session_state.timer_running is False) and (end_time is not None) and ((end_time - time.time()) <= 0):
         reflection_form(st.session_state.preset)
+
+# ===============================
+# 투두리스트 화면
+# ===============================
+def get_todos(show_all=False, only_today=False):
+    query = "SELECT * FROM todos"
+    params = []
+    conds = []
+    if only_today:
+        conds.append("due_date=?")
+        params.append(TODAY)
+    if not show_all and not only_today:
+        # 미완료 기본
+        conds.append("is_done=0")
+    if conds:
+        query += " WHERE " + " AND ".join(conds)
+    query += " ORDER BY is_done ASC, priority DESC, due_date ASC"
+    with closing(get_conn()) as conn:
+        df = pd.read_sql_query(query, conn, params=params)
+    return df
+
+def add_todo(title, subject, due_date, estimated_min, priority, reward_coins):
+    with closing(get_conn()) as conn:
+        c = conn.cursor()
+        c.execute("""INSERT INTO todos(id, title, subject, due_date, estimated_min, priority, is_done, done_at, reward_coins)
+                     VALUES(?,?,?,?,?,?,?,?,?)""",
+                  (str(uuid.uuid4()), title, subject, due_date, estimated_min, priority, 0, None, reward_coins))
+        conn.commit()
+
+def update_todo_done(todo_id, done=True):
+    with closing(get_conn()) as conn:
+        c = conn.cursor()
+        c.execute("SELECT is_done, reward_coins FROM todos WHERE id=?", (todo_id,))
+        row = c.fetchone()
+        if not row:
+            return
+        is_done_now, reward = row
+        if done and is_done_now == 0:
+            # 완료 처리 + 코인 지급
+            c.execute("UPDATE todos SET is_done=1, done_at=? WHERE id=?", (dt.datetime.now().isoformat(), todo_id))
+            conn.commit()
+            if reward and reward > 0:
+                update_daily(coins_delta=reward)
+                add_reward("todo", "계획 완료", reward)
+        elif (not done) and is_done_now == 1:
+            # 완료 취소(코인 회수는 안전상 생략, 원하면 주석 해제)
+            # update_daily(coins_delta=-reward)
+            # add_reward("todo-undo", "계획 완료 취소", -reward)
+            c.execute("UPDATE todos SET is_done=0, done_at=NULL WHERE id=?", (todo_id,))
+            conn.commit()
+
+def edit_todo(todo_id, title, subject, due_date, estimated_min, priority, reward_coins):
+    with closing(get_conn()) as conn:
+        c = conn.cursor()
+        c.execute("""UPDATE todos
+                     SET title=?, subject=?, due_date=?, estimated_min=?, priority=?, reward_coins=?
+                     WHERE id=?""",
+                  (title, subject, due_date, estimated_min, priority, reward_coins, todo_id))
+        conn.commit()
+
+def delete_todo(todo_id):
+    with closing(get_conn()) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM todos WHERE id=?", (todo_id,))
+        conn.commit()
+
+def render_todo():
+    st.header("투두리스트 · 공부 계획")
+    st.caption("계획을 완료하면 설정한 코인이 자동 지급돼요!")
+
+    # 빠른 보기
+    box1, box2, box3 = st.columns(3)
+    with box1:
+        if st.button("오늘 할 일 보기"):
+            st.session_state.todo_filter = "today"
+            safe_rerun()
+    with box2:
+        if st.button("미완료 보기"):
+            st.session_state.todo_filter = "pending"
+            safe_rerun()
+    with box3:
+        if st.button("전체 보기"):
+            st.session_state.todo_filter = "all"
+            safe_rerun()
+
+    if "todo_filter" not in st.session_state:
+        st.session_state.todo_filter = "pending"
+
+    only_today = st.session_state.todo_filter == "today"
+    show_all = st.session_state.todo_filter == "all"
+
+    # 추가 폼
+    st.subheader("새 계획 추가")
+    subjects = get_subjects()
+    col_a, col_b = st.columns([3,2])
+    with col_a:
+        title = st.text_input("계획 제목", placeholder="예: 수학 II 3개년 기출 2세트")
+    with col_b:
+        subject = st.selectbox("과목(선택)", ["(미지정)"] + subjects)
+    col_c, col_d, col_e = st.columns([1,1,1])
+    with col_c:
+        due_date = st.date_input("마감일", value=dt.date.today()).isoformat()
+    with col_d:
+        estimated = st.number_input("예상 소요(분)", min_value=10, max_value=600, value=60, step=10)
+    with col_e:
+        priority = st.selectbox("우선순위", [1,2,3,4,5], index=2)
+    col_f, col_g = st.columns([1,3])
+    with col_f:
+        reward = st.number_input("보상 코인", min_value=0, max_value=100, value=10, step=5)
+    with col_g:
+        if st.button("계획 추가"):
+            if (title or "").strip():
+                add_todo(
+                    title=title.strip(),
+                    subject=None if subject=="(미지정)" else subject,
+                    due_date=due_date,
+                    estimated_min=int(estimated),
+                    priority=int(priority),
+                    reward_coins=int(reward)
+                )
+                st.success("계획이 추가되었어요!")
+                safe_rerun()
+            else:
+                st.warning("계획 제목을 입력해 주세요.")
+
+    st.markdown("---")
+
+    # 목록
+    df = get_todos(show_all=show_all, only_today=only_today)
+    if df is None or df.empty:
+        st.info("표시할 계획이 없어요. 새로운 계획을 추가해 보세요!")
+        return
+
+    st.subheader("계획 목록")
+    for _, row in df.iterrows():
+        with st.container():
+            col1, col2, col3, col4, col5, col6, col7 = st.columns([4,2,2,1,1,1,1])
+            title_disp = row["title"]
+            subj_disp = row["subject"] if row["subject"] else "(미지정)"
+            due_disp = row["due_date"]
+            est_disp = f"{int(row['estimated_min'])}분"
+            prio_disp = int(row["priority"])
+            reward_disp = int(row["reward_coins"]) if row["reward_coins"] else 0
+            done = bool(row["is_done"])
+
+            with col1:
+                st.markdown(f"<div class='card'><b>{title_disp}</b><br><span class='small'>{subj_disp} • {due_disp} • 예상 {est_disp}</span></div>", unsafe_allow_html=True)
+            with col2:
+                st.write(f"우선순위: {prio_disp}")
+            with col3:
+                st.write(f"보상: {reward_disp}코인")
+            with col4:
+                if st.button("완료" if not done else "완료 취소", key=f"done_{row['id']}"):
+                    update_todo_done(row["id"], done=not done)
+                    if not done and reward_disp > 0:
+                        st.toast(f"+{reward_disp} 코인 지급!")
+                    safe_rerun()
+            with col5:
+                if st.button("편집", key=f"edit_{row['id']}"):
+                    st.session_state.edit_id = row["id"]
+                    st.session_state.edit_payload = row.to_dict()
+                    safe_rerun()
+            with col6:
+                if st.button("삭제", key=f"del_{row['id']}"):
+                    delete_todo(row["id"])
+                    st.toast("삭제되었습니다.")
+                    safe_rerun()
+            with col7:
+                st.write("✅" if done else "EMOJI_4")
+
+    # 편집 모달 대용
+    if "edit_id" in st.session_state and st.session_state.edit_id:
+        st.markdown("---")
+        st.subheader("계획 편집")
+        data = st.session_state.edit_payload
+        e_title = st.text_input("계획 제목", value=data["title"])
+        subj_list = ["(미지정)"] + get_subjects()
+        e_subject = st.selectbox("과목(선택)", subj_list, index=(subj_list.index(data["subject"]) if data["subject"] in subj_list else 0))
+        e_due = st.date_input("마감일", value=dt.date.fromisoformat(data["due_date"])).isoformat()
+        e_est = st.number_input("예상 소요(분)", min_value=10, max_value=600, value=int(data["estimated_min"]), step=10)
+        e_pri = st.selectbox("우선순위", [1,2,3,4,5], index=[1,2,3,4,5].index(int(data["priority"])))
+        e_reward = st.number_input("보상 코인", min_value=0, max_value=100, value=int(data["reward_coins"] or 0), step=5)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("저장"):
+                edit_todo(
+                    todo_id=st.session_state.edit_id,
+                    title=e_title.strip(),
+                    subject=None if e_subject=="(미지정)" else e_subject,
+                    due_date=e_due,
+                    estimated_min=int(e_est),
+                    priority=int(e_pri),
+                    reward_coins=int(e_reward)
+                )
+                st.success("수정되었어요!")
+                st.session_state.edit_id = None
+                st.session_state.edit_payload = None
+                safe_rerun()
+        with c2:
+            if st.button("취소"):
+                st.session_state.edit_id = None
+                st.session_state.edit_payload = None
+                safe_rerun()
 
 # ===============================
 # 상점 화면
@@ -646,10 +862,12 @@ def render_shop():
         st.caption("마스코트를 하나 구매하면 타이머 화면에 귀여운 이모지가 표시돼요.")
 
 # ===============================
-# 화면 라우팅
+# 라우팅
 # ===============================
 if st.session_state.active_tab == TAB_HOME:
     render_home()
+elif st.session_state.active_tab == TAB_TODO:
+    render_todo()
 elif st.session_state.active_tab == TAB_TIMER:
     render_timer()
 elif st.session_state.active_tab == TAB_STATS:
