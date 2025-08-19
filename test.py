@@ -2,6 +2,8 @@ import time
 import datetime as dt
 import uuid
 import sqlite3
+import hashlib
+import os
 from contextlib import closing
 
 import pandas as pd
@@ -16,6 +18,19 @@ APP_DB = "study_mate_subjectless.db"
 TODAY = dt.date.today().isoformat()
 
 # ===============================
+# 보안 유틸: 비밀번호 해시/검증
+# ===============================
+def hash_password(password: str, salt: bytes = None) -> tuple[str, bytes]:
+    if salt is None:
+        salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+    return dk.hex(), salt
+
+def verify_password(password: str, hashed_hex: str, salt: bytes) -> bool:
+    dk_check, _ = hash_password(password, salt)
+    return hashlib.compare_digest(dk_check, hashed_hex)
+
+# ===============================
 # rerun 호환 유틸
 # ===============================
 def safe_rerun():
@@ -25,27 +40,41 @@ def safe_rerun():
         st.experimental_rerun()
 
 # ===============================
-# DB 초기화
+# DB 초기화 + 마이그레이션
 # ===============================
 def init_db():
     with closing(sqlite3.connect(APP_DB)) as conn:
         c = conn.cursor()
-        # 하루 상태
+        # 사용자 계정
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS users(
+            id TEXT PRIMARY KEY,
+            email TEXT UNIQUE,
+            username TEXT UNIQUE,
+            pw_hash TEXT,
+            pw_salt BLOB,
+            created_at TEXT
+        );
+        """)
+        # 하루 상태(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS daily(
-            date TEXT PRIMARY KEY,
+            date TEXT,
+            user_id TEXT,
             goal_min INTEGER,
             coins INTEGER,
             streak INTEGER,
             theme TEXT,
             sound TEXT,
-            mascot TEXT
+            mascot TEXT,
+            PRIMARY KEY(date, user_id)
         );
         """)
-        # 공부 세션 로그
+        # 공부 세션 로그(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS sessions(
             id TEXT PRIMARY KEY,
+            user_id TEXT,
             date TEXT,
             subject TEXT,
             duration_min INTEGER,
@@ -55,25 +84,27 @@ def init_db():
             difficulty INTEGER
         );
         """)
-        # 보유 아이템
+        # 보유 아이템(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS inventory(
             item_id TEXT PRIMARY KEY,
+            user_id TEXT,
             item_type TEXT,
             name TEXT
         );
         """)
-        # 보상/구매 로그
+        # 보상/구매 로그(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS rewards(
             id TEXT PRIMARY KEY,
+            user_id TEXT,
             date TEXT,
             type TEXT,
             name TEXT,
             coins_change INTEGER
         );
         """)
-        # 길드(로컬 모드)
+        # 길드(샘플) + 내 길드(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS guild(
             id TEXT PRIMARY KEY,
@@ -83,19 +114,23 @@ def init_db():
         c.execute("""
         CREATE TABLE IF NOT EXISTS my_guild(
             id TEXT PRIMARY KEY,
+            user_id TEXT,
             name TEXT
         );
         """)
-        # 사용자 정의 과목
+        # 사용자 정의 과목(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS subjects(
-            name TEXT PRIMARY KEY
+            name TEXT,
+            user_id TEXT,
+            PRIMARY KEY (name, user_id)
         );
         """)
-        # 투두리스트(공부 계획)
+        # 투두리스트(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS todos(
             id TEXT PRIMARY KEY,
+            user_id TEXT,
             title TEXT,
             subject TEXT,
             due_date TEXT,
@@ -116,6 +151,11 @@ init_db()
 # ===============================
 # 세션 상태
 # ===============================
+if "user_id" not in st.session_state:
+    st.session_state.user_id = None
+if "username" not in st.session_state:
+    st.session_state.username = None
+
 if "timer_running" not in st.session_state:
     st.session_state.timer_running = False
 if "end_time" not in st.session_state:
@@ -128,6 +168,7 @@ if "distractions" not in st.session_state:
     st.session_state.distractions = 0
 
 # 내비게이션 탭
+TAB_AUTH = "로그인"
 TAB_HOME = "홈"
 TAB_TODO = "투두리스트"
 TAB_TIMER = "타이머"
@@ -136,30 +177,81 @@ TAB_GUILD = "길드"
 TAB_SHOP = "상점"
 
 if "active_tab" not in st.session_state:
-    st.session_state.active_tab = TAB_HOME
+    st.session_state.active_tab = TAB_AUTH  # 최초엔 로그인 화면 노출
 
 # ===============================
-# Daily 상태 보장
+# 인증/계정 함수
 # ===============================
-def ensure_today():
+def create_user(email: str, username: str, password: str) -> tuple[bool, str]:
+    email = (email or "").strip().lower()
+    username = (username or "").strip()
+    if not email or not username or not password:
+        return False, "이메일, 사용자명, 비밀번호를 모두 입력해 주세요."
+    pw_hex, salt = hash_password(password)
+    uid = str(uuid.uuid4())
+    try:
+        with closing(get_conn()) as conn:
+            c = conn.cursor()
+            c.execute("INSERT INTO users(id, email, username, pw_hash, pw_salt, created_at) VALUES(?,?,?,?,?,?)",
+                      (uid, email, username, pw_hex, salt, dt.datetime.now().isoformat()))
+            conn.commit()
+        return True, uid
+    except sqlite3.IntegrityError as e:
+        msg = "이미 사용 중인 이메일 또는 사용자명입니다."
+        return False, msg
+
+def authenticate(login_id: str, password: str) -> tuple[bool, str, str]:
+    # login_id는 이메일 또는 사용자명
+    q = "SELECT id, email, username, pw_hash, pw_salt FROM users WHERE email=? OR username=?"
     with closing(get_conn()) as conn:
         c = conn.cursor()
-        c.execute("SELECT date FROM daily WHERE date=?", (TODAY,))
+        c.execute(q, (login_id.strip().lower(), login_id.strip()))
+        row = c.fetchone()
+        if not row:
+            return False, None, "계정을 찾을 수 없습니다."
+        uid, email, username, pw_hex, salt = row
+        if verify_password(password, pw_hex, salt):
+            return True, (uid, username), ""
+        else:
+            return False, None, "비밀번호가 일치하지 않습니다."
+
+def require_login():
+    if not st.session_state.user_id:
+        st.warning("이 기능은 로그인 후 이용하실 수 있어요.")
+        st.session_state.active_tab = TAB_AUTH
+        st.stop()
+
+# ===============================
+# Daily 상태 보장(유저별)
+# ===============================
+def ensure_today():
+    require_uid = st.session_state.user_id
+    if not require_uid:
+        return
+    with closing(get_conn()) as conn:
+        c = conn.cursor()
+        c.execute("SELECT date FROM daily WHERE date=? AND user_id=?", (TODAY, require_uid))
         row = c.fetchone()
         if not row:
             y = (dt.date.today() - dt.timedelta(days=1)).isoformat()
-            c.execute("SELECT streak FROM daily WHERE date=?", (y,))
+            c.execute("SELECT streak FROM daily WHERE date=? AND user_id=?", (y, require_uid))
             prev = c.fetchone()
             streak = (prev[0] + 1) if prev else 1
-            c.execute("""INSERT INTO daily(date, goal_min, coins, streak, theme, sound, mascot)
-                         VALUES(?,?,?,?,?,?,?)""",
-                      (TODAY, 120, 0, streak, "핑크", "벨", "여우"))
+            c.execute("""INSERT INTO daily(date, user_id, goal_min, coins, streak, theme, sound, mascot)
+                         VALUES(?,?,?,?,?,?,?,?)""",
+                      (TODAY, require_uid, 120, 0, streak, "핑크", "벨", "여우"))
             conn.commit()
 
 def get_daily():
     ensure_today()
+    uid = st.session_state.user_id
+    if not uid:
+        # 로그인 전 임시 값(사이드바 표기용)
+        return dict(date=TODAY, goal_min=120, coins=0, streak=0, theme="핑크", sound="벨", mascot="여우")
     with closing(get_conn()) as conn:
-        df = pd.read_sql_query("SELECT * FROM daily WHERE date=?", conn, params=(TODAY,))
+        df = pd.read_sql_query("SELECT * FROM daily WHERE date=? AND user_id=?", conn, params=(TODAY, uid))
+    if df.empty:
+        return dict(date=TODAY, goal_min=120, coins=0, streak=0, theme="핑크", sound="벨", mascot="여우")
     r = df.iloc[0]
     return dict(
         date=r["date"],
@@ -172,6 +264,9 @@ def get_daily():
     )
 
 def update_daily(goal=None, coins_delta=0, theme=None, sound=None, mascot=None, overwrite_streak=None):
+    uid = st.session_state.user_id
+    if not uid:
+        return
     ensure_today()
     d = get_daily()
     goal_min = goal if goal is not None else d["goal_min"]
@@ -182,28 +277,34 @@ def update_daily(goal=None, coins_delta=0, theme=None, sound=None, mascot=None, 
     mascot = mascot if mascot is not None else d["mascot"]
     with closing(get_conn()) as conn:
         c = conn.cursor()
-        c.execute("""REPLACE INTO daily(date, goal_min, coins, streak, theme, sound, mascot)
-                     VALUES(?,?,?,?,?,?,?)""",
-                  (TODAY, goal_min, coins, streak, theme, sound, mascot))
+        c.execute("""REPLACE INTO daily(date, user_id, goal_min, coins, streak, theme, sound, mascot)
+                     VALUES(?,?,?,?,?,?,?,?)""",
+                  (TODAY, uid, goal_min, coins, streak, theme, sound, mascot))
         conn.commit()
 
 # ===============================
-# 세션/보상 로직
+# 세션/보상 로직(유저별)
 # ===============================
 def add_session(subject, duration_min, distractions, mood, energy, difficulty):
+    uid = st.session_state.user_id
+    if not uid:
+        return
     with closing(get_conn()) as conn:
         c = conn.cursor()
-        c.execute("""INSERT INTO sessions(id, date, subject, duration_min, distractions, mood, energy, difficulty)
-                     VALUES(?,?,?,?,?,?,?,?)""",
-                  (str(uuid.uuid4()), TODAY, subject, duration_min, distractions, mood, energy, difficulty))
+        c.execute("""INSERT INTO sessions(id, user_id, date, subject, duration_min, distractions, mood, energy, difficulty)
+                     VALUES(?,?,?,?,?,?,?,?,?)""",
+                  (str(uuid.uuid4()), uid, TODAY, subject, duration_min, distractions, mood, energy, difficulty))
         conn.commit()
 
 def add_reward(rtype, name, coins_change):
+    uid = st.session_state.user_id
+    if not uid:
+        return
     with closing(get_conn()) as conn:
         c = conn.cursor()
-        c.execute("""INSERT INTO rewards(id, date, type, name, coins_change)
-                     VALUES(?,?,?,?,?)""",
-                  (str(uuid.uuid4()), TODAY, rtype, name, coins_change))
+        c.execute("""INSERT INTO rewards(id, user_id, date, type, name, coins_change)
+                     VALUES(?,?,?,?,?,?)""",
+                  (str(uuid.uuid4()), uid, TODAY, rtype, name, coins_change))
         conn.commit()
 
 def grant_coins(base=10, bonus=0, reason="세션 완료"):
@@ -211,49 +312,65 @@ def grant_coins(base=10, bonus=0, reason="세션 완료"):
     add_reward("coin", reason, base+bonus)
 
 def get_today_summary():
+    uid = st.session_state.user_id
+    if not uid:
+        return 0, pd.DataFrame()
     with closing(get_conn()) as conn:
-        df = pd.read_sql_query("SELECT * FROM sessions WHERE date=?", conn, params=(TODAY,))
+        df = pd.read_sql_query("SELECT * FROM sessions WHERE date=? AND user_id=?", conn, params=(TODAY, uid))
     total = int(df["duration_min"].sum()) if not df.empty else 0
     return total, df
 
 def get_weekly():
+    uid = st.session_state.user_id
+    if not uid:
+        return pd.DataFrame()
     with closing(get_conn()) as conn:
         df = pd.read_sql_query("""
             SELECT date, SUM(duration_min) AS total_min
             FROM sessions
+            WHERE user_id=?
             GROUP BY date
             ORDER BY date ASC
-        """, conn)
+        """, conn, params=(uid,))
     return df.tail(7) if not df.empty else df
 
 # ===============================
-# 과목 관리
+# 과목 관리(유저별)
 # ===============================
 def get_subjects() -> list:
+    uid = st.session_state.user_id
+    if not uid:
+        return []
     with closing(get_conn()) as conn:
-        df = pd.read_sql_query("SELECT name FROM subjects ORDER BY name ASC", conn)
+        df = pd.read_sql_query("SELECT name FROM subjects WHERE user_id=? ORDER BY name ASC", conn, params=(uid,))
     return df["name"].tolist() if not df.empty else []
 
 def add_subject(name: str) -> bool:
+    uid = st.session_state.user_id
+    if not uid:
+        return False
     name = (name or "").strip()
     if not name:
         return False
     with closing(get_conn()) as conn:
         c = conn.cursor()
         try:
-            c.execute("INSERT INTO subjects(name) VALUES(?)", (name,))
+            c.execute("INSERT INTO subjects(name, user_id) VALUES(?,?)", (name, uid))
             conn.commit()
             return True
         except sqlite3.IntegrityError:
             return False
 
 def remove_subject(name: str) -> bool:
+    uid = st.session_state.user_id
+    if not uid:
+        return False
     name = (name or "").strip()
     if not name:
         return False
     with closing(get_conn()) as conn:
         c = conn.cursor()
-        c.execute("DELETE FROM subjects WHERE name=?", (name,))
+        c.execute("DELETE FROM subjects WHERE name=? AND user_id=?", (name, uid))
         conn.commit()
     return True
 
@@ -267,8 +384,6 @@ THEMES = {
     "네이비": {"PRIMARY":"#203A74", "SECONDARY":"#2F4A8A", "ACCENT":"#7AA2FF", "DARK":"#101A2E"},
     "코랄":   {"PRIMARY":"#FF8A80", "SECONDARY":"#FFD3C9", "ACCENT":"#FFA8A0", "DARK":"#2B1E1E"},
 }
-# 라임색 배제
-
 SHOP_ITEMS = [
     {"type":"theme", "name":"핑크", "price":50},
     {"type":"theme", "name":"라일락", "price":50},
@@ -284,25 +399,34 @@ SHOP_ITEMS = [
 ]
 
 def has_item(item_type, name):
+    uid = st.session_state.user_id
+    if not uid:
+        return False
     with closing(get_conn()) as conn:
-        df = pd.read_sql_query("SELECT 1 FROM inventory WHERE item_type=? AND name=?",
-                               conn, params=(item_type, name))
+        df = pd.read_sql_query("SELECT 1 FROM inventory WHERE user_id=? AND item_type=? AND name=?",
+                               conn, params=(uid, item_type, name))
     return not df.empty
 
 def add_item(item_type, name):
+    uid = st.session_state.user_id
+    if not uid:
+        return
     with closing(get_conn()) as conn:
         c = conn.cursor()
-        c.execute("""INSERT OR IGNORE INTO inventory(item_id, item_type, name)
-                     VALUES(?,?,?)""", (str(uuid.uuid4()), item_type, name))
+        c.execute("""INSERT OR IGNORE INTO inventory(item_id, user_id, item_type, name)
+                     VALUES(?,?,?,?)""", (str(uuid.uuid4()), uid, item_type, name))
         conn.commit()
 
 def get_inventory(item_type=None):
+    uid = st.session_state.user_id
+    if not uid:
+        return pd.DataFrame()
     with closing(get_conn()) as conn:
         if item_type:
-            df = pd.read_sql_query("SELECT item_type, name FROM inventory WHERE item_type=?",
-                                   conn, params=(item_type,))
+            df = pd.read_sql_query("SELECT item_type, name FROM inventory WHERE user_id=? AND item_type=?",
+                                   conn, params=(uid, item_type))
         else:
-            df = pd.read_sql_query("SELECT item_type, name FROM inventory", conn)
+            df = pd.read_sql_query("SELECT item_type, name FROM inventory WHERE user_id=?", conn, params=(uid,))
     return df
 
 # ===============================
@@ -346,7 +470,7 @@ def apply_theme(theme_name):
     }}
     .small {{ color: #6b7280; font-size: 0.85rem; }}
 
-    /* 이미 구매한 항목 표기용 */
+    /* 상점: 이미 구매함 */
     .badge-owned {{
       display:inline-block; padding:6px 12px; border-radius:10px;
       background: {PRIMARY}22; color: var(--dark);
@@ -365,20 +489,28 @@ apply_theme(get_daily()["theme"])
 # 사이드바
 # ===============================
 st.sidebar.title("수능 러닝 메이트+")
+if st.session_state.user_id:
+    st.sidebar.success(f"안녕하세요, {st.session_state.username}님!")
+else:
+    st.sidebar.info("로그인하지 않으셨습니다.")
+
 d_side = get_daily()
-new_goal = st.sidebar.slider("오늘 목표(분)", min_value=30, max_value=600, step=10, value=d_side["goal_min"])
-if new_goal != d_side["goal_min"]:
-    update_daily(goal=new_goal)
-    st.toast("오늘의 목표가 업데이트되었어요!")
+if st.session_state.user_id:
+    new_goal = st.sidebar.slider("오늘 목표(분)", min_value=30, max_value=600, step=10, value=d_side["goal_min"])
+    if new_goal != d_side["goal_min"]:
+        update_daily(goal=new_goal)
+        st.toast("오늘의 목표가 업데이트되었어요!")
 
-st.sidebar.markdown("---")
-st.sidebar.markdown(f"보유 코인: {get_daily()['coins']} • 스트릭: {get_daily()['streak']}일")
-st.sidebar.caption(f"현재 테마: {get_daily()['theme']} • 사운드: {get_daily()['sound']} • 마스코트: {get_daily()['mascot']}")
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"보유 코인: {get_daily()['coins']} • 스트릭: {get_daily()['streak']}일")
+    st.sidebar.caption(f"현재 테마: {get_daily()['theme']} • 사운드: {get_daily()['sound']} • 마스코트: {get_daily()['mascot']}")
 
+# 빠른 이동
+nav_items = [TAB_AUTH] if not st.session_state.user_id else [TAB_HOME, TAB_TODO, TAB_TIMER, TAB_STATS, TAB_GUILD, TAB_SHOP]
 nav_choice = st.sidebar.radio(
     "빠른 이동",
-    [TAB_HOME, TAB_TODO, TAB_TIMER, TAB_STATS, TAB_GUILD, TAB_SHOP],
-    index=[TAB_HOME, TAB_TODO, TAB_TIMER, TAB_STATS, TAB_GUILD, TAB_SHOP].index(st.session_state.active_tab),
+    nav_items,
+    index=0 if st.session_state.active_tab not in nav_items else nav_items.index(st.session_state.active_tab),
 )
 if nav_choice != st.session_state.active_tab:
     st.session_state.active_tab = nav_choice
@@ -388,34 +520,77 @@ if nav_choice != st.session_state.active_tab:
 # 상단바 내비게이션
 # ===============================
 st.markdown("<div class='topbar'>", unsafe_allow_html=True)
-c_nav1, c_nav2, c_nav3, c_nav4, c_nav5, c_nav_sp = st.columns([1,1,1,1,1,5])
-with c_nav1:
-    if st.button("EMOJI_0 홈"):
-        st.session_state.active_tab = TAB_HOME
-        safe_rerun()
-with c_nav2:
-    if st.button("EMOJI_1 투두"):
-        st.session_state.active_tab = TAB_TODO
-        safe_rerun()
-with c_nav3:
-    if st.button("⏱ 타이머"):
-        st.session_state.active_tab = TAB_TIMER
-        safe_rerun()
-with c_nav4:
-    if st.button("EMOJI_2 통계"):
-        st.session_state.active_tab = TAB_STATS
-        safe_rerun()
-with c_nav5:
-    if st.button("EMOJI_3 상점"):
-        st.session_state.active_tab = TAB_SHOP
-        safe_rerun()
+if st.session_state.user_id:
+    c_nav1, c_nav2, c_nav3, c_nav4, c_nav5, c_nav6, c_sp = st.columns([1,1,1,1,1,1,4])
+    with c_nav1:
+        if st.button("EMOJI_0 홈"):
+            st.session_state.active_tab = TAB_HOME; safe_rerun()
+    with c_nav2:
+        if st.button("EMOJI_1 투두"):
+            st.session_state.active_tab = TAB_TODO; safe_rerun()
+    with c_nav3:
+        if st.button("⏱ 타이머"):
+            st.session_state.active_tab = TAB_TIMER; safe_rerun()
+    with c_nav4:
+        if st.button("EMOJI_2 통계"):
+            st.session_state.active_tab = TAB_STATS; safe_rerun()
+    with c_nav5:
+        if st.button("EMOJI_3 상점"):
+            st.session_state.active_tab = TAB_SHOP; safe_rerun()
+    with c_nav6:
+        if st.button("로그아웃"):
+            st.session_state.user_id = None
+            st.session_state.username = None
+            st.session_state.active_tab = TAB_AUTH
+            st.toast("로그아웃 되었습니다.")
+            safe_rerun()
+else:
+    c_nav1, c_sp = st.columns([1,9])
+    with c_nav1:
+        if st.button("로그인"):
+            st.session_state.active_tab = TAB_AUTH; safe_rerun()
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ===============================
-# 공통 화면들
+# 화면 컴포넌트
 # ===============================
+def render_auth():
+    st.header("로그인 / 회원가입")
+    tab_login, tab_signup = st.tabs(["로그인", "회원가입"])
+
+    with tab_login:
+        login_id = st.text_input("이메일 또는 사용자명")
+        pw = st.text_input("비밀번호", type="password")
+        if st.button("로그인"):
+            ok, data, msg = authenticate(login_id, pw)
+            if ok:
+                uid, username = data
+                st.session_state.user_id = uid
+                st.session_state.username = username
+                st.session_state.active_tab = TAB_HOME
+                st.success("환영합니다! 로그인에 성공했어요.")
+                safe_rerun()
+            else:
+                st.error(msg)
+
+    with tab_signup:
+        email = st.text_input("이메일")
+        username = st.text_input("사용자명")
+        pw1 = st.text_input("비밀번호", type="password")
+        pw2 = st.text_input("비밀번호 확인", type="password")
+        if st.button("회원가입"):
+            if pw1 != pw2:
+                st.error("비밀번호 확인이 일치하지 않습니다.")
+            else:
+                ok, res = create_user(email, username, pw1)
+                if ok:
+                    st.success("회원가입이 완료되었습니다. 이제 로그인해 주세요.")
+                else:
+                    st.error(res)
+
 def render_home():
-    st.title("오늘의 공부, 충분히 멋져요! ✨")
+    require_login()
+    st.title(f"오늘의 공부, 충분히 멋져요! ✨")
     total_min, df_today = get_today_summary()
     d = get_daily()
     progress = min(total_min / max(1, d["goal_min"]), 1.0)
@@ -448,6 +623,7 @@ def render_home():
     st.markdown("<div class='card kudos'>오늘의 한 줄 칭찬: 짧게라도 꾸준히가 정답이에요. 지금의 한 번이 내일을 바꿔요! EMOJI_1</div>", unsafe_allow_html=True)
 
 def render_stats():
+    require_login()
     st.header("주간 통계")
     weekly = get_weekly()
     if weekly is not None and not weekly.empty:
@@ -457,6 +633,7 @@ def render_stats():
         st.info("이번 주 데이터가 곧 채워질 거예요.")
 
 def render_guild():
+    require_login()
     st.header("길드")
     with closing(get_conn()) as conn:
         c = conn.cursor()
@@ -468,7 +645,7 @@ def render_guild():
 
     with closing(get_conn()) as conn:
         df_guilds = pd.read_sql_query("SELECT id, name FROM guild", conn)
-        df_mine = pd.read_sql_query("SELECT id, name FROM my_guild", conn)
+        df_mine = pd.read_sql_query("SELECT id, name FROM my_guild WHERE user_id=?", conn, params=(st.session_state.user_id,))
 
     current_name = df_mine["name"].iloc[0] if not df_mine.empty else "길드 미참여"
     st.caption(f"현재 길드: {current_name}")
@@ -477,19 +654,17 @@ def render_guild():
     if st.button("길드 참여/변경"):
         with closing(get_conn()) as conn:
             c = conn.cursor()
-            c.execute("DELETE FROM my_guild")
+            c.execute("DELETE FROM my_guild WHERE user_id=?", (st.session_state.user_id,))
             gid = df_guilds.loc[df_guilds["name"]==gname, "id"].iloc[0]
-            c.execute("INSERT INTO my_guild(id,name) VALUES(?,?)", (gid, gname))
+            c.execute("INSERT INTO my_guild(id,user_id,name) VALUES(?,?,?)", (str(uuid.uuid4()), st.session_state.user_id, gname))
             conn.commit()
         st.success(f"{gname}에 참여했어요! 함께 꾸준히 가봐요.")
 
     st.subheader("길드 랭킹(최근 7일)")
     st.info("현재는 로컬 단일 사용자 모드예요. 온라인 동기화 후 실제 멤버 랭킹이 제공됩니다.")
 
-# ===============================
-# 타이머 화면
-# ===============================
 def render_timer():
+    require_login()
     st.header("포모도로 타이머")
 
     # 과목 관리
@@ -578,8 +753,7 @@ def render_timer():
             submitted = st.form_submit_button("저장하고 코인 받기")
             if submitted:
                 subject_to_save = st.session_state.subject if st.session_state.subject else "(미지정)"
-                add_session(subject_to_save, duration_min,
-                            st.session_state.distractions, mood, energy, difficulty)
+                add_session(subject_to_save, duration_min, st.session_state.distractions, mood, energy, difficulty)
                 bonus = 10 if st.session_state.distractions <= 1 else 0
                 grant_coins(base=10, bonus=bonus, reason="세션 완료")
                 st.session_state.timer_running = False
@@ -591,12 +765,13 @@ def render_timer():
     if (st.session_state.timer_running is False) and (end_time is not None) and ((end_time - time.time()) <= 0):
         reflection_form(st.session_state.preset)
 
-# ===============================
-# 투두리스트 화면
-# ===============================
+# 투두리스트
 def get_todos(show_all=False, only_today=False):
-    query = "SELECT * FROM todos"
-    params = []
+    uid = st.session_state.user_id
+    if not uid:
+        return pd.DataFrame()
+    query = "SELECT * FROM todos WHERE user_id=?"
+    params = [uid]
     conds = []
     if only_today:
         conds.append("due_date=?")
@@ -604,24 +779,30 @@ def get_todos(show_all=False, only_today=False):
     if not show_all and not only_today:
         conds.append("is_done=0")
     if conds:
-        query += " WHERE " + " AND ".join(conds)
+        query += " AND " + " AND ".join(conds)
     query += " ORDER BY is_done ASC, priority DESC, due_date ASC"
     with closing(get_conn()) as conn:
         df = pd.read_sql_query(query, conn, params=params)
     return df
 
 def add_todo(title, subject, due_date, estimated_min, priority, reward_coins):
+    uid = st.session_state.user_id
+    if not uid:
+        return
     with closing(get_conn()) as conn:
         c = conn.cursor()
-        c.execute("""INSERT INTO todos(id, title, subject, due_date, estimated_min, priority, is_done, done_at, reward_coins)
-                     VALUES(?,?,?,?,?,?,?,?,?)""",
-                  (str(uuid.uuid4()), title, subject, due_date, estimated_min, priority, 0, None, reward_coins))
+        c.execute("""INSERT INTO todos(id, user_id, title, subject, due_date, estimated_min, priority, is_done, done_at, reward_coins)
+                     VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                  (str(uuid.uuid4()), uid, title, subject, due_date, estimated_min, priority, 0, None, reward_coins))
         conn.commit()
 
 def update_todo_done(todo_id, done=True):
+    uid = st.session_state.user_id
+    if not uid:
+        return
     with closing(get_conn()) as conn:
         c = conn.cursor()
-        c.execute("SELECT is_done, reward_coins FROM todos WHERE id=?", (todo_id,))
+        c.execute("SELECT is_done, reward_coins FROM todos WHERE id=? AND user_id=?", (todo_id, uid))
         row = c.fetchone()
         if not row:
             return
@@ -633,43 +814,46 @@ def update_todo_done(todo_id, done=True):
                 update_daily(coins_delta=reward)
                 add_reward("todo", "계획 완료", reward)
         elif (not done) and is_done_now == 1:
-            # 취소 시 코인 회수는 기본 비활성화(원하면 회수 로직 추가)
             c.execute("UPDATE todos SET is_done=0, done_at=NULL WHERE id=?", (todo_id,))
             conn.commit()
 
 def edit_todo(todo_id, title, subject, due_date, estimated_min, priority, reward_coins):
+    uid = st.session_state.user_id
+    if not uid:
+        return
     with closing(get_conn()) as conn:
         c = conn.cursor()
         c.execute("""UPDATE todos
                      SET title=?, subject=?, due_date=?, estimated_min=?, priority=?, reward_coins=?
-                     WHERE id=?""",
-                  (title, subject, due_date, estimated_min, priority, reward_coins, todo_id))
+                     WHERE id=? AND user_id=?""",
+                  (title, subject, due_date, estimated_min, priority, reward_coins, todo_id, uid))
         conn.commit()
 
 def delete_todo(todo_id):
+    uid = st.session_state.user_id
+    if not uid:
+        return
     with closing(get_conn()) as conn:
         c = conn.cursor()
-        c.execute("DELETE FROM todos WHERE id=?", (todo_id,))
+        c.execute("DELETE FROM todos WHERE id=? AND user_id=?", (todo_id, uid))
         conn.commit()
 
 def render_todo():
+    require_login()
     st.header("투두리스트 · 공부 계획")
     st.caption("계획을 완료하면 설정한 코인이 자동 지급돼요!")
 
-    # 빠른 보기
+    # 필터 버튼
     box1, box2, box3 = st.columns(3)
     with box1:
         if st.button("오늘 할 일 보기"):
-            st.session_state.todo_filter = "today"
-            safe_rerun()
+            st.session_state.todo_filter = "today"; safe_rerun()
     with box2:
         if st.button("미완료 보기"):
-            st.session_state.todo_filter = "pending"
-            safe_rerun()
+            st.session_state.todo_filter = "pending"; safe_rerun()
     with box3:
         if st.button("전체 보기"):
-            st.session_state.todo_filter = "all"
-            safe_rerun()
+            st.session_state.todo_filter = "all"; safe_rerun()
 
     if "todo_filter" not in st.session_state:
         st.session_state.todo_filter = "pending"
@@ -791,10 +975,9 @@ def render_todo():
                 st.session_state.edit_payload = None
                 safe_rerun()
 
-# ===============================
-# 상점 화면(보유 시 '이미 구매함' 배지 표시)
-# ===============================
+# 상점(보유 시 '이미 구매함')
 def render_shop():
+    require_login()
     d = get_daily()
     st.header("상점")
     st.caption("해금한 테마/사운드/마스코트를 실제 UI에 적용할 수 있어요. 라임색은 제외했습니다.")
@@ -803,8 +986,7 @@ def render_shop():
     st.subheader("아이템 구매")
     for item in SHOP_ITEMS:
         owned = has_item(item["type"], item["name"])
-        card_class = "disabled-box" if owned else ""  # 보유 시 카드 전체 약간 흐리게
-
+        card_class = "disabled-box" if owned else ""
         col1, col2, col3 = st.columns([4,1,2])
         with col1:
             st.markdown(
@@ -829,7 +1011,6 @@ def render_shop():
                         safe_rerun()
 
     st.subheader("장착/적용")
-    # 테마 적용
     inv_theme = get_inventory("theme")
     if not inv_theme.empty:
         current_theme = get_daily()["theme"]
@@ -844,7 +1025,6 @@ def render_shop():
     else:
         st.caption("테마를 하나 구매하면 여기서 적용할 수 있어요.")
 
-    # 사운드 적용
     inv_sound = get_inventory("sound")
     if not inv_sound.empty:
         current_sound = get_daily()["sound"]
@@ -857,7 +1037,6 @@ def render_shop():
     else:
         st.caption("사운드를 하나 구매하면 종료 알림 문구로 안내해 드려요.")
 
-    # 마스코트 적용
     inv_masc = get_inventory("mascot")
     if not inv_masc.empty:
         current_masc = get_daily()["mascot"]
@@ -873,7 +1052,9 @@ def render_shop():
 # ===============================
 # 라우팅
 # ===============================
-if st.session_state.active_tab == TAB_HOME:
+if st.session_state.active_tab == TAB_AUTH:
+    render_auth()
+elif st.session_state.active_tab == TAB_HOME:
     render_home()
 elif st.session_state.active_tab == TAB_TODO:
     render_todo()
