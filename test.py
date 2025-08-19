@@ -129,11 +129,11 @@ if "distractions" not in st.session_state:
 
 # 내비게이션 탭
 TAB_HOME = "홈"
+TAB_TODO = "투두리스트"
 TAB_TIMER = "타이머"
 TAB_STATS = "통계"
 TAB_GUILD = "길드"
 TAB_SHOP = "상점"
-TAB_TODO = "투두리스트"
 
 if "active_tab" not in st.session_state:
     st.session_state.active_tab = TAB_HOME
@@ -345,6 +345,15 @@ def apply_theme(theme_name):
       margin-right: 6px; font-size: 0.85rem;
     }}
     .small {{ color: #6b7280; font-size: 0.85rem; }}
+
+    /* 이미 구매한 항목 표기용 */
+    .badge-owned {{
+      display:inline-block; padding:6px 12px; border-radius:10px;
+      background: {PRIMARY}22; color: var(--dark);
+      border: 1px solid {ACCENT}55; font-weight:600;
+    }}
+    .disabled-box {{ opacity: 0.7; pointer-events: none; }}
+
     .kudos {{ color: {DARK}; font-weight: 600; }}
     </style>
     """
@@ -593,7 +602,6 @@ def get_todos(show_all=False, only_today=False):
         conds.append("due_date=?")
         params.append(TODAY)
     if not show_all and not only_today:
-        # 미완료 기본
         conds.append("is_done=0")
     if conds:
         query += " WHERE " + " AND ".join(conds)
@@ -619,16 +627,13 @@ def update_todo_done(todo_id, done=True):
             return
         is_done_now, reward = row
         if done and is_done_now == 0:
-            # 완료 처리 + 코인 지급
             c.execute("UPDATE todos SET is_done=1, done_at=? WHERE id=?", (dt.datetime.now().isoformat(), todo_id))
             conn.commit()
             if reward and reward > 0:
                 update_daily(coins_delta=reward)
                 add_reward("todo", "계획 완료", reward)
         elif (not done) and is_done_now == 1:
-            # 완료 취소(코인 회수는 안전상 생략, 원하면 주석 해제)
-            # update_daily(coins_delta=-reward)
-            # add_reward("todo-undo", "계획 완료 취소", -reward)
+            # 취소 시 코인 회수는 기본 비활성화(원하면 회수 로직 추가)
             c.execute("UPDATE todos SET is_done=0, done_at=NULL WHERE id=?", (todo_id,))
             conn.commit()
 
@@ -751,7 +756,7 @@ def render_todo():
             with col7:
                 st.write("✅" if done else "EMOJI_4")
 
-    # 편집 모달 대용
+    # 편집 섹션
     if "edit_id" in st.session_state and st.session_state.edit_id:
         st.markdown("---")
         st.subheader("계획 편집")
@@ -787,7 +792,7 @@ def render_todo():
                 safe_rerun()
 
 # ===============================
-# 상점 화면
+# 상점 화면(보유 시 '이미 구매함' 배지 표시)
 # ===============================
 def render_shop():
     d = get_daily()
@@ -797,27 +802,31 @@ def render_shop():
 
     st.subheader("아이템 구매")
     for item in SHOP_ITEMS:
-        col1, col2, col3, col4 = st.columns([3,1,1,2])
+        owned = has_item(item["type"], item["name"])
+        card_class = "disabled-box" if owned else ""  # 보유 시 카드 전체 약간 흐리게
+
+        col1, col2, col3 = st.columns([4,1,2])
         with col1:
-            st.write(f"- {item['type']} • {item['name']}")
+            st.markdown(
+                f"<div class='card {card_class}'><b>{item['name']}</b> <span class='small'>• {item['type']}</span></div>",
+                unsafe_allow_html=True
+            )
         with col2:
-            st.write(f"{item['price']}코인")
+            st.markdown(f"<div class='{card_class}'>{item['price']}코인</div>", unsafe_allow_html=True)
         with col3:
-            owned = has_item(item["type"], item["name"])
-            st.write("보유" if owned else "미보유")
-        with col4:
-            if st.button(f"구매: {item['name']}", key=f"buy_{item['type']}_{item['name']}"):
-                d_now = get_daily()
-                if has_item(item["type"], item["name"]):
-                    st.warning("이미 보유 중이에요.")
-                elif d_now["coins"] < item["price"]:
-                    st.warning("코인이 부족해요.")
-                else:
-                    add_item(item["type"], item["name"])
-                    update_daily(coins_delta=-item["price"])
-                    add_reward("shop", item["name"], -item["price"])
-                    st.success(f"{item['name']} 해금 완료!")
-                    safe_rerun()
+            if owned:
+                st.markdown("<div class='badge-owned'>이미 구매함</div>", unsafe_allow_html=True)
+            else:
+                if st.button("구매", key=f"buy_{item['type']}_{item['name']}"):
+                    d_now = get_daily()
+                    if d_now["coins"] < item["price"]:
+                        st.warning("코인이 부족해요.")
+                    else:
+                        add_item(item["type"], item["name"])
+                        update_daily(coins_delta=-item["price"])
+                        add_reward("shop", item["name"], -item["price"])
+                        st.success(f"{item['name']} 해금 완료!")
+                        safe_rerun()
 
     st.subheader("장착/적용")
     # 테마 적용
