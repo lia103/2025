@@ -113,6 +113,16 @@ if "subject" not in st.session_state:
 if "distractions" not in st.session_state:
     st.session_state.distractions = 0
 
+# 내비게이션 상태
+TAB_HOME = "홈"
+TAB_TIMER = "타이머"
+TAB_STATS = "통계"
+TAB_GUILD = "길드"
+TAB_SHOP = "상점"
+
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = TAB_HOME
+
 # ===============================
 # 초기 상태 보장(daily)
 # ===============================
@@ -306,6 +316,11 @@ def apply_theme(theme_name):
       background: linear-gradient(135deg, {PRIMARY}33, {SECONDARY}33);
       color: var(--dark); padding: 0.5rem 1rem;
     }}
+    .topbar .stButton>button {{
+      border-radius: 999px; border: 1px solid {ACCENT}55;
+      background: linear-gradient(135deg, {PRIMARY}22, {SECONDARY}22);
+      padding: 0.35rem 0.9rem; font-weight: 600;
+    }}
     .card {{
       border-radius: 16px; border: 1px solid {ACCENT}33; padding: 14px; background: white;
       box-shadow: 0 6px 18px rgba(0,0,0,0.06); margin-bottom: 10px;
@@ -325,7 +340,7 @@ def apply_theme(theme_name):
 apply_theme(get_daily()["theme"])
 
 # ===============================
-# 사이드바
+# 사이드바(공통)
 # ===============================
 st.sidebar.title("수능 러닝 메이트+")
 d_side = get_daily()
@@ -338,13 +353,44 @@ st.sidebar.markdown("---")
 st.sidebar.markdown(f"보유 코인: {get_daily()['coins']} • 스트릭: {get_daily()['streak']}일")
 st.sidebar.caption(f"현재 테마: {get_daily()['theme']} • 사운드: {get_daily()['sound']} • 마스코트: {get_daily()['mascot']}")
 
-# ===============================
-# 탭 구성
-# ===============================
-tab_home, tab_timer, tab_stats, tab_guild, tab_shop = st.tabs(["홈", "타이머", "통계", "길드", "상점"])
+# 사이드바 빠른 이동(선택)
+nav_choice = st.sidebar.radio(
+    "빠른 이동",
+    [TAB_HOME, TAB_TIMER, TAB_STATS, TAB_GUILD, TAB_SHOP],
+    index=[TAB_HOME, TAB_TIMER, TAB_STATS, TAB_GUILD, TAB_SHOP].index(st.session_state.active_tab),
+    horizontal=False
+)
+if nav_choice != st.session_state.active_tab:
+    st.session_state.active_tab = nav_choice
+    safe_rerun()
 
-# 홈 탭
-with tab_home:
+# ===============================
+# 상단바 내비게이션
+# ===============================
+st.markdown("<div class='topbar'>", unsafe_allow_html=True)
+c_nav1, c_nav2, c_nav3, c_nav4, c_nav_sp = st.columns([1,1,1,1,6])
+with c_nav1:
+    if st.button("EMOJI_0 홈"):
+        st.session_state.active_tab = TAB_HOME
+        safe_rerun()
+with c_nav2:
+    if st.button("⏱ 타이머"):
+        st.session_state.active_tab = TAB_TIMER
+        safe_rerun()
+with c_nav3:
+    if st.button("EMOJI_1 통계"):
+        st.session_state.active_tab = TAB_STATS
+        safe_rerun()
+with c_nav4:
+    if st.button("EMOJI_2 상점"):
+        st.session_state.active_tab = TAB_SHOP
+        safe_rerun()
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ===============================
+# 공통 컴포넌트
+# ===============================
+def render_home():
     st.title("오늘의 공부, 충분히 멋져요! ✨")
     total_min, df_today = get_today_summary()
     d = get_daily()
@@ -373,12 +419,53 @@ with tab_home:
             use_container_width=True
         )
     else:
-        st.info("아직 기록이 없어요. 타이머 탭에서 한 세션 시작해 볼까요?")
+        st.info("아직 기록이 없어요. 타이머 화면에서 한 세션 시작해 볼까요?")
 
     st.markdown("<div class='card kudos'>오늘의 한 줄 칭찬: 짧게라도 꾸준히가 정답이에요. 지금의 한 번이 내일을 바꿔요! EMOJI_1</div>", unsafe_allow_html=True)
 
-# 타이머 탭
-with tab_timer:
+def render_stats():
+    st.header("주간 통계")
+    weekly = get_weekly()
+    if weekly is not None and not weekly.empty:
+        chart_df = weekly.set_index("date")
+        st.bar_chart(chart_df)
+    else:
+        st.info("이번 주 데이터가 곧 채워질 거예요.")
+
+def render_guild():
+    st.header("길드")
+    with closing(get_conn()) as conn:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM guild")
+        if c.fetchone()[0] == 0:
+            for gid, name in [("focus-fox","포커스 폭스"), ("steady-bear","스테디 베어"), ("owl-night","올빼미 나잇")]:
+                c.execute("INSERT INTO guild(id,name) VALUES(?,?)", (gid,name))
+            conn.commit()
+
+    with closing(get_conn()) as conn:
+        df_guilds = pd.read_sql_query("SELECT id, name FROM guild", conn)
+        df_mine = pd.read_sql_query("SELECT id, name FROM my_guild", conn)
+
+    current_name = df_mine["name"].iloc[0] if not df_mine.empty else "길드 미참여"
+    st.caption(f"현재 길드: {current_name}")
+
+    gname = st.selectbox("길드 선택", df_guilds["name"].tolist())
+    if st.button("길드 참여/변경"):
+        with closing(get_conn()) as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM my_guild")
+            gid = df_guilds.loc[df_guilds["name"]==gname, "id"].iloc[0]
+            c.execute("INSERT INTO my_guild(id,name) VALUES(?,?)", (gid, gname))
+            conn.commit()
+        st.success(f"{gname}에 참여했어요! 함께 꾸준히 가봐요.")
+
+    st.subheader("길드 랭킹(최근 7일)")
+    st.info("현재는 로컬 단일 사용자 모드예요. 온라인 동기화 후 실제 멤버 랭킹이 제공됩니다.")
+
+# ===============================
+# 타이머 화면
+# ===============================
+def render_timer():
     st.header("포모도로 타이머")
 
     # 과목 관리 섹션(사용자 추가/삭제)
@@ -483,49 +570,10 @@ with tab_timer:
     if (st.session_state.timer_running is False) and (end_time is not None) and ((end_time - time.time()) <= 0):
         reflection_form(st.session_state.preset)
 
-# 통계 탭
-with tab_stats:
-    st.header("주간 통계")
-    weekly = get_weekly()
-    if weekly is not None and not weekly.empty:
-        chart_df = weekly.set_index("date")
-        st.bar_chart(chart_df)
-    else:
-        st.info("이번 주 데이터가 곧 채워질 거예요.")
-
-# 길드 탭(로컬 모드)
-with tab_guild:
-    st.header("길드")
-    with closing(get_conn()) as conn:
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM guild")
-        if c.fetchone()[0] == 0:
-            for gid, name in [("focus-fox","포커스 폭스"), ("steady-bear","스테디 베어"), ("owl-night","올빼미 나잇")]:
-                c.execute("INSERT INTO guild(id,name) VALUES(?,?)", (gid,name))
-            conn.commit()
-
-    with closing(get_conn()) as conn:
-        df_guilds = pd.read_sql_query("SELECT id, name FROM guild", conn)
-        df_mine = pd.read_sql_query("SELECT id, name FROM my_guild", conn)
-
-    current_name = df_mine["name"].iloc[0] if not df_mine.empty else "길드 미참여"
-    st.caption(f"현재 길드: {current_name}")
-
-    gname = st.selectbox("길드 선택", df_guilds["name"].tolist())
-    if st.button("길드 참여/변경"):
-        with closing(get_conn()) as conn:
-            c = conn.cursor()
-            c.execute("DELETE FROM my_guild")
-            gid = df_guilds.loc[df_guilds["name"]==gname, "id"].iloc[0]
-            c.execute("INSERT INTO my_guild(id,name) VALUES(?,?)", (gid, gname))
-            conn.commit()
-        st.success(f"{gname}에 참여했어요! 함께 꾸준히 가봐요.")
-
-    st.subheader("길드 랭킹(최근 7일)")
-    st.info("현재는 로컬 단일 사용자 모드예요. 온라인 동기화 후 실제 멤버 랭킹이 제공됩니다.")
-
-# 상점 탭
-with tab_shop:
+# ===============================
+# 상점 화면
+# ===============================
+def render_shop():
     d = get_daily()
     st.header("상점")
     st.caption("해금한 테마/사운드/마스코트를 실제 UI에 적용할 수 있어요. 라임색은 제외했습니다.")
@@ -596,5 +644,17 @@ with tab_shop:
             st.success(f"마스코트 '{mascot_to_apply}'로 설정되었어요! 타이머 화면에 표시됩니다.")
     else:
         st.caption("마스코트를 하나 구매하면 타이머 화면에 귀여운 이모지가 표시돼요.")
-    
-tab_home, tab_timer, tab_stats, tab_guild, tab_shop = st.tabs(["홈", "타이머", "통계", "길드", "상점"])
+
+# ===============================
+# 화면 라우팅
+# ===============================
+if st.session_state.active_tab == TAB_HOME:
+    render_home()
+elif st.session_state.active_tab == TAB_TIMER:
+    render_timer()
+elif st.session_state.active_tab == TAB_STATS:
+    render_stats()
+elif st.session_state.active_tab == TAB_GUILD:
+    render_guild()
+elif st.session_state.active_tab == TAB_SHOP:
+    render_shop()
