@@ -245,7 +245,6 @@ def ensure_today():
 def get_daily():
     uid = st.session_state.user_id
     if not uid:
-        # 로그인 전에는 DB 접근하지 않음
         return dict(date=TODAY, goal_min=120, coins=0, streak=0, theme="핑크", sound="벨", mascot="여우")
     ensure_today()
     with closing(get_conn()) as conn:
@@ -254,13 +253,8 @@ def get_daily():
         return dict(date=TODAY, goal_min=120, coins=0, streak=0, theme="핑크", sound="벨", mascot="여우")
     r = df.iloc[0]
     return dict(
-        date=r["date"],
-        goal_min=int(r["goal_min"]),
-        coins=int(r["coins"]),
-        streak=int(r["streak"]),
-        theme=r["theme"],
-        sound=r["sound"],
-        mascot=r["mascot"]
+        date=r["date"], goal_min=int(r["goal_min"]), coins=int(r["coins"]),
+        streak=int(r["streak"]), theme=r["theme"], sound=r["sound"], mascot=r["mascot"]
     )
 
 def update_daily(goal=None, coins_delta=0, theme=None, sound=None, mascot=None, overwrite_streak=None):
@@ -278,7 +272,8 @@ def update_daily(goal=None, coins_delta=0, theme=None, sound=None, mascot=None, 
     with closing(get_conn()) as conn:
         c = conn.cursor()
         c.execute("""REPLACE INTO daily(date, user_id, goal_min, coins, streak, theme, sound, mascot)
-                     VALUES(?,?,?,?,?,?,?,?)""", (TODAY, uid, goal_min, coins, streak, theme, sound, mascot))
+                     VALUES(?,?,?,?,?,?,?,?)""",
+                  (TODAY, uid, goal_min, coins, streak, theme, sound, mascot))
         conn.commit()
 
 # ===============================
@@ -374,7 +369,7 @@ def remove_subject(name: str) -> bool:
     return True
 
 # ===============================
-# 상점/테마
+# 상점/테마/인벤토리
 # ===============================
 THEMES = {
     "핑크":   {"PRIMARY":"#F5A6C6", "SECONDARY":"#B7A8F5", "ACCENT":"#8DB7F5", "DARK":"#1E2A44"},
@@ -501,7 +496,7 @@ else:
 # ===============================
 st.sidebar.title("수능 러닝 메이트+")
 if st.session_state.user_id:
-    st.sidebar.success(f"안녕하세요, 사용자님!")
+    st.sidebar.success("안녕하세요, 사용자님!")
 else:
     st.sidebar.info("로그인하지 않으셨습니다.")
 
@@ -620,9 +615,9 @@ def render_home():
         grant_coins(base=0, bonus=30, reason="데일리 목표 달성 보너스")
 
     st.subheader("오늘의 기록")
-    if df_today is not None and not df_today.empty:
+    if not df_today.empty:
         st.dataframe(
-            df_today[["subject", "duration_min", "distractions", "mood", "energy", "difficulty"]]
+            df_today[["subject","duration_min","distractions","mood","energy","difficulty"]]
             .rename(columns={"subject":"과목","duration_min":"분","distractions":"방해","mood":"기분","energy":"에너지","difficulty":"난이도"}),
             use_container_width=True
         )
