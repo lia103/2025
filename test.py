@@ -294,6 +294,22 @@ st.sidebar.markdown(f"보유 코인: {get_daily()['coins']} • 스트릭: {get_
 st.sidebar.caption(f"현재 테마: {get_daily()['theme']} • 사운드: {get_daily()['sound']} • 마스코트: {get_daily()['mascot']}")
 
 # ===============================
+# 상단 고정 보조 네비게이션 버튼
+# ===============================
+st.markdown(
+    "<div style='position:sticky; top:0; background:white; padding:8px 0; z-index:999; border-bottom:1px solid #e5e7eb;'>"
+    "<span style='margin-right:8px; font-weight:600;'>빠른 이동:</span>"
+    "</div>", unsafe_allow_html=True
+)
+nav_c1, nav_c2, nav_c3 = st.columns([1,1,8])
+with nav_c1:
+    if st.button("타이머로 이동 ▶"):
+        st.session_state.__go_timer = True
+with nav_c2:
+    if st.button("상점으로 이동 🛍️"):
+        st.session_state.__go_shop = True
+
+# ===============================
 # 탭 구성: 홈, 타이머, 통계, 길드, 상점
 # ===============================
 tab_home, tab_timer, tab_stats, tab_guild, tab_shop = st.tabs(["홈", "타이머", "통계", "길드", "상점"])
@@ -343,6 +359,7 @@ with tab_home:
 
 # 타이머 탭
 with tab_timer:
+    st.markdown("<a name='timer_anchor'></a>", unsafe_allow_html=True)
     d = get_daily()
     st.header(f"포모도로 타이머 • 마스코트: {d['mascot']}")
     st.caption("마스코트는 상점에서 변경할 수 있어요.")
@@ -455,6 +472,7 @@ with tab_guild:
 
 # 상점 탭
 with tab_shop:
+    st.markdown("<a name='shop_anchor'></a>", unsafe_allow_html=True)
     d = get_daily()
     st.header("상점")
     st.caption("해금한 테마/사운드/마스코트를 실제 UI에 적용할 수 있어요. 라임색은 제외했습니다.")
@@ -536,3 +554,13 @@ with tab_shop:
             df_r.rename(columns={"date":"날짜","type":"구분","name":"아이템/사유","coins_change":"코인 변화"}),
             use_container_width=True
         )
+
+# ===============================
+# 네비 버튼 클릭 시 안내(탭 전환 대안)
+# ===============================
+if st.session_state.get("__go_timer"):
+    st.session_state.__go_timer = False
+    st.info("상단의 '타이머' 탭을 눌러 이동해 주세요.")
+if st.session_state.get("__go_shop"):
+    st.session_state.__go_shop = False
+    st.info("상단의 '상점' 탭을 눌러 이동해 주세요.")
