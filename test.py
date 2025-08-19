@@ -8,9 +8,9 @@ import pandas as pd
 import streamlit as st
 
 # ===============================
-# 기본 설정: 단일 사용자/로그인 없음
+# 기본 설정: 단일 사용자 / 로그인 없음
 # ===============================
-st.set_page_config(page_title="수능 러닝 메이트+", page_icon="🌟", layout="wide")
+st.set_page_config(page_title="수능 러닝 메이트+", page_icon="EMOJI_0", layout="wide")
 
 APP_DB = "study_mate_final.db"
 TODAY = dt.date.today().isoformat()
@@ -21,7 +21,6 @@ TODAY = dt.date.today().isoformat()
 def init_db():
     with closing(sqlite3.connect(APP_DB)) as conn:
         c = conn.cursor()
-        # 하루 상태(목표/코인/스트릭/현재 장착 아이템)
         c.execute("""
         CREATE TABLE IF NOT EXISTS daily(
             date TEXT PRIMARY KEY,
@@ -33,7 +32,6 @@ def init_db():
             mascot TEXT
         );
         """)
-        # 공부 세션 로그
         c.execute("""
         CREATE TABLE IF NOT EXISTS sessions(
             id TEXT PRIMARY KEY,
@@ -46,7 +44,6 @@ def init_db():
             difficulty INTEGER
         );
         """)
-        # 보유 아이템
         c.execute("""
         CREATE TABLE IF NOT EXISTS inventory(
             item_id TEXT PRIMARY KEY,
@@ -54,7 +51,6 @@ def init_db():
             name TEXT
         );
         """)
-        # 보상/구매 로그
         c.execute("""
         CREATE TABLE IF NOT EXISTS rewards(
             id TEXT PRIMARY KEY,
@@ -64,7 +60,6 @@ def init_db():
             coins_change INTEGER
         );
         """)
-        # 길드(로컬 모의 데이터)
         c.execute("""
         CREATE TABLE IF NOT EXISTS guild(
             id TEXT PRIMARY KEY,
@@ -93,12 +88,10 @@ def ensure_today():
         c.execute("SELECT date FROM daily WHERE date=?", (TODAY,))
         row = c.fetchone()
         if not row:
-            # 스트릭(전날 기록 있으면 +1)
             y = (dt.date.today() - dt.timedelta(days=1)).isoformat()
             c.execute("SELECT streak FROM daily WHERE date=?", (y,))
             prev = c.fetchone()
             streak = (prev[0] + 1) if prev else 1
-            # 기본값(라임 배제, 밝고 귀엽고 화려한 팔레트)
             c.execute("""INSERT INTO daily(date, goal_min, coins, streak, theme, sound, mascot)
                          VALUES(?,?,?,?,?,?,?)""",
                       (TODAY, 120, 0, streak, "핑크", "벨", "여우"))
@@ -172,7 +165,7 @@ def get_weekly():
     return df.tail(7) if not df.empty else df
 
 # ===============================
-# 상점/인벤토리
+# 상점/인벤토리/테마
 # ===============================
 THEMES = {
     "핑크":   {"PRIMARY":"#F5A6C6", "SECONDARY":"#B7A8F5", "ACCENT":"#8DB7F5", "DARK":"#1E2A44"},
@@ -181,20 +174,16 @@ THEMES = {
     "네이비": {"PRIMARY":"#203A74", "SECONDARY":"#2F4A8A", "ACCENT":"#7AA2FF", "DARK":"#101A2E"},
     "코랄":   {"PRIMARY":"#FF8A80", "SECONDARY":"#FFD3C9", "ACCENT":"#FFA8A0", "DARK":"#2B1E1E"},
 }
-# 라임색은 의도적으로 제외
 
 SHOP_ITEMS = [
-    # 테마 5종
     {"type":"theme", "name":"핑크", "price":50},
     {"type":"theme", "name":"라일락", "price":50},
     {"type":"theme", "name":"하늘", "price":50},
     {"type":"theme", "name":"네이비", "price":50},
     {"type":"theme", "name":"코랄", "price":50},
-    # 사운드 3종(미리보기 문구)
     {"type":"sound", "name":"벨", "price":30},
     {"type":"sound", "name":"우드블럭", "price":30},
     {"type":"sound", "name":"빗소리", "price":30},
-    # 마스코트 3종(타이머 이모지)
     {"type":"mascot", "name":"여우", "price":40},
     {"type":"mascot", "name":"곰", "price":40},
     {"type":"mascot", "name":"올빼미", "price":40},
@@ -223,7 +212,7 @@ def get_inventory(item_type=None):
     return df
 
 # ===============================
-# 테마 적용(CSS 주입)
+# 테마 적용(CSS)
 # ===============================
 def apply_theme(theme_name):
     palette = THEMES.get(theme_name, THEMES["핑크"])
@@ -275,6 +264,11 @@ if "subject" not in st.session_state:
     st.session_state.subject = "국어"
 if "distractions" not in st.session_state:
     st.session_state.distractions = 0
+# 보조 네비 플래그(옵션)
+if "__go_timer" not in st.session_state:
+    st.session_state.__go_timer = False
+if "__go_shop" not in st.session_state:
+    st.session_state.__go_shop = False
 
 # 현재 테마 적용
 apply_theme(get_daily()["theme"])
@@ -294,19 +288,19 @@ st.sidebar.markdown(f"보유 코인: {get_daily()['coins']} • 스트릭: {get_
 st.sidebar.caption(f"현재 테마: {get_daily()['theme']} • 사운드: {get_daily()['sound']} • 마스코트: {get_daily()['mascot']}")
 
 # ===============================
-# 상단 고정 보조 네비게이션 버튼
+# 상단 보조 네비게이션(옵션)
 # ===============================
 st.markdown(
     "<div style='position:sticky; top:0; background:white; padding:8px 0; z-index:999; border-bottom:1px solid #e5e7eb;'>"
     "<span style='margin-right:8px; font-weight:600;'>빠른 이동:</span>"
     "</div>", unsafe_allow_html=True
 )
-nav_c1, nav_c2, nav_c3 = st.columns([1,1,8])
+nav_c1, nav_c2, _ = st.columns([1,1,8])
 with nav_c1:
     if st.button("타이머로 이동 ▶"):
         st.session_state.__go_timer = True
 with nav_c2:
-    if st.button("상점으로 이동 🛍️"):
+    if st.button("상점으로 이동 EMOJI_1"):
         st.session_state.__go_shop = True
 
 # ===============================
@@ -336,15 +330,6 @@ with tab_home:
         st.success("오늘 목표 달성! +30코인 보너스 지급!")
         grant_coins(base=0, bonus=30, reason="데일리 목표 달성 보너스")
 
-    # 간단 배지
-    badges = []
-    if total_min >= 100: badges.append("첫 100분 달성")
-    if total_min >= 200: badges.append("200분 돌파")
-    if dt.datetime.now().hour <= 8 and total_min > 0: badges.append("아침 출발 배지")
-    if badges:
-        st.markdown("획득 배지")
-        st.write(" ".join([f"<span class='badge'>🏅 {b}</span>" for b in badges]), unsafe_allow_html=True)
-
     st.subheader("오늘의 기록")
     if df_today is not None and not df_today.empty:
         st.dataframe(
@@ -355,25 +340,21 @@ with tab_home:
     else:
         st.info("아직 기록이 없어요. 타이머 탭에서 한 세션 시작해 볼까요?")
 
-    st.markdown("<div class='card kudos'>오늘의 한 줄 칭찬: 짧게라도 꾸준히가 정답이에요. 지금의 한 번이 내일을 바꿔요! 💪</div>", unsafe_allow_html=True)
+    st.markdown("<div class='card kudos'>오늘의 한 줄 칭찬: 짧게라도 꾸준히가 정답이에요. 지금의 한 번이 내일을 바꿔요! EMOJI_2</div>", unsafe_allow_html=True)
 
 # 타이머 탭
 with tab_timer:
-    st.markdown("<a name='timer_anchor'></a>", unsafe_allow_html=True)
     d = get_daily()
     st.header(f"포모도로 타이머 • 마스코트: {d['mascot']}")
     st.caption("마스코트는 상점에서 변경할 수 있어요.")
 
     colA, colB, colC, colD = st.columns(4)
     with colA:
-        if st.button("25분"):
-            st.session_state.preset = 25
+        if st.button("25분"): st.session_state.preset = 25
     with colB:
-        if st.button("40분"):
-            st.session_state.preset = 40
+        if st.button("40분"): st.session_state.preset = 40
     with colC:
-        if st.button("50분"):
-            st.session_state.preset = 50
+        if st.button("50분"): st.session_state.preset = 50
     with colD:
         st.session_state.preset = st.number_input("커스텀(분)", min_value=10, max_value=120, value=st.session_state.preset, step=5)
 
@@ -401,19 +382,18 @@ with tab_timer:
             st.success("세션 완료! 회고를 기록해 볼까요?")
         else:
             mm, ss = divmod(remaining, 60)
-            mascot_emoji = {"여우":"🦊","곰":"🐻","올빼미":"🦉"}.get(d["mascot"], "✨")
+            mascot_emoji = {"여우":"EMOJI_3","곰":"EMOJI_4","올빼미":"EMOJI_5"}.get(d["mascot"], "✨")
             timer_placeholder.markdown(
-                f"<div class='card'><h3>{mascot_emoji} 남은 시간: {mm:02d}:{ss:02d}</h3><div class='small'>집중! 휴대폰은 잠시 멀리 📵</div></div>",
+                f"<div class='card'><h3>{mascot_emoji} 남은 시간: {mm:02d}:{ss:02d}</h3><div class='small'>집중! 휴대폰은 잠시 멀리 EMOJI_6</div></div>",
                 unsafe_allow_html=True
             )
             time.sleep(1)
-            st.experimental_rerun()
+            st.rerun()
 
-    # 회고 폼
     def reflection_form(duration_min):
         with st.form("reflection"):
             st.write(f"이번 세션: {st.session_state.subject} • {duration_min}분 • 방해 {st.session_state.distractions}회")
-            mood = st.radio("기분", ["🙂 좋음","😐 보통","😣 낮음"], horizontal=True)
+            mood = st.radio("기분", ["EMOJI_7 좋음","EMOJI_8 보통","EMOJI_9 낮음"], horizontal=True)
             energy = st.slider("에너지", 1, 5, 3)
             difficulty = st.slider("난이도", 1, 5, 3)
             submitted = st.form_submit_button("저장하고 코인 받기")
@@ -423,7 +403,7 @@ with tab_timer:
                 grant_coins(base=10, bonus=bonus, reason="세션 완료")
                 st.success(f"기록 완료! +{10+bonus}코인 지급")
                 st.balloons()
-                st.experimental_rerun()
+                st.rerun()
 
     if not st.session_state.timer_running and st.session_state.end_time and (st.session_state.end_time - time.time()) <= 0:
         reflection_form(st.session_state.preset)
@@ -441,7 +421,6 @@ with tab_stats:
 # 길드 탭(로컬 모드)
 with tab_guild:
     st.header("길드")
-    # 길드 후보 초기 주입
     with closing(get_conn()) as conn:
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM guild")
@@ -472,7 +451,6 @@ with tab_guild:
 
 # 상점 탭
 with tab_shop:
-    st.markdown("<a name='shop_anchor'></a>", unsafe_allow_html=True)
     d = get_daily()
     st.header("상점")
     st.caption("해금한 테마/사운드/마스코트를 실제 UI에 적용할 수 있어요. 라임색은 제외했습니다.")
@@ -500,10 +478,9 @@ with tab_shop:
                     update_daily(coins_delta=-item["price"])
                     add_reward("shop", item["name"], -item["price"])
                     st.success(f"{item['name']} 해금 완료!")
-                    st.experimental_rerun()
+                    st.rerun()
 
     st.subheader("장착/적용")
-    # 테마 적용
     inv_theme = get_inventory("theme")
     if not inv_theme.empty:
         current_theme = get_daily()["theme"]
@@ -514,11 +491,10 @@ with tab_shop:
             update_daily(theme=theme_to_apply)
             apply_theme(theme_to_apply)
             st.success(f"테마 '{theme_to_apply}'가 적용되었어요!")
-            st.experimental_rerun()
+            st.rerun()
     else:
         st.caption("테마를 하나 구매하면 여기서 적용할 수 있어요.")
 
-    # 사운드 적용
     inv_sound = get_inventory("sound")
     if not inv_sound.empty:
         current_sound = get_daily()["sound"]
@@ -531,7 +507,6 @@ with tab_shop:
     else:
         st.caption("사운드를 하나 구매하면 종료 알림 문구로 안내해 드려요.")
 
-    # 마스코트 적용
     inv_masc = get_inventory("mascot")
     if not inv_masc.empty:
         current_masc = get_daily()["mascot"]
@@ -544,24 +519,10 @@ with tab_shop:
     else:
         st.caption("마스코트를 하나 구매하면 타이머 화면에 귀여운 이모지가 표시돼요.")
 
-    st.subheader("구매/보상 내역")
-    with closing(get_conn()) as conn:
-        df_r = pd.read_sql_query("SELECT date, type, name, coins_change FROM rewards ORDER BY date DESC", conn)
-    if df_r.empty:
-        st.info("아직 구매나 보상 내역이 없어요. 세션을 완료해 코인을 모아보세요!")
-    else:
-        st.dataframe(
-            df_r.rename(columns={"date":"날짜","type":"구분","name":"아이템/사유","coins_change":"코인 변화"}),
-            use_container_width=True
-        )
-
-# ===============================
-# 네비 버튼 클릭 시 안내(탭 전환 대안)
-# ===============================
+# 네비 버튼 안내(옵션)
 if st.session_state.get("__go_timer"):
     st.session_state.__go_timer = False
-    st.info("상단의 '타이머' 탭을 눌러 이동해 주세요.")
+    st.info("상단의 ‘타이머’ 탭을 눌러 이동해 주세요.")
 if st.session_state.get("__go_shop"):
     st.session_state.__go_shop = False
-    st.info("상단의 '상점' 탭을 눌러 이동해 주세요.")
-tab_home, tab_timer, tab_stats, tab_guild, tab_shop = st.tabs(["홈", "타이머", "통계", "길드", "상점"])
+    st.info("상단의 ‘상점’ 탭을 눌러 이동해 주세요.")
