@@ -8,16 +8,7 @@ import pandas as pd
 import altair as alt
 from passlib.hash import bcrypt
 
-# ===== 이모지·문자 인코딩 안전 설정 =====
-# SQLite가 기본적으로 UTF-8을 사용하지만, Python 드라이버에서 이모지 포함 문자열을
-# 확실히 다루도록 text_factory를 설정합니다.
-def make_conn(db_path: str):
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    conn.text_factory = str  # 이모지 포함 텍스트 안정화
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
-
-# ===== 경로/상수 =====
+# ================== 공통 상수/경로 ==================
 DB_PATH = "diary.db"
 MEDIA_DIR = "media"
 IMG_DIR = os.path.join(MEDIA_DIR, "images")
@@ -26,15 +17,20 @@ os.makedirs(IMG_DIR, exist_ok=True)
 os.makedirs(AUD_DIR, exist_ok=True)
 
 APP_TITLE = "EMOJI_0 나의 일기장"
-PALETTE = {
+
+# 기본 팔레트(라임색 제외)
+BASE_PALETTE = {
     "primary": "#FF7A9E",   # 코랄핑크
     "accent":  "#B39DDB",   # 라일락
     "mint":    "#6EC6C1",   # 청록
-    "bg_soft": "#FFF0F4",   # 연핑크 배경
+    "bg_soft": "#FFF0F4",   # 연핑크 배경(라이트)
+    "bg_dark": "#0F1115",   # 다크 배경
+    "card_dark":"#161A22",
     "text":    "#2B2B2B",
+    "text_dark":"#E9E9E9"
 }
 
-# 감정 사전: 저장용 코드(key) ↔ 표시용 라벨(label) 분리
+# 감정 라벨(라벨은 이모지 포함, 저장은 key로)
 EMOTIONS = [
     {"key": "happy",   "label": "EMOJI_1 행복"},
     {"key": "calm",    "label": "EMOJI_2 평온"},
@@ -47,7 +43,13 @@ EMO_KEY_TO_LABEL = {e["key"]: e["label"] for e in EMOTIONS}
 EMO_LABELS = [e["label"] for e in EMOTIONS]
 EMO_KEYS = [e["key"] for e in EMOTIONS]
 
-# ===== DB =====
+# ================== DB ==================
+def make_conn(db_path: str):
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.text_factory = str
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
 def init_db():
     conn = make_conn(DB_PATH)
     c = conn.cursor()
@@ -65,7 +67,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             d TEXT,
-            mood TEXT,              -- 저장용 코드(happy/calm/...)
+            mood TEXT,
             mood_score INTEGER,
             tags TEXT,
             content TEXT,
@@ -78,23 +80,38 @@ def init_db():
         CREATE TABLE IF NOT EXISTS files(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entry_id INTEGER,
-            kind TEXT,              -- 'image' / 'audio'
+            kind TEXT,
             path TEXT,
             original_name TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(entry_id) REFERENCES entries(id) ON DELETE CASCADE
         )
     """)
+    # 사용자 테마 설정 저장 테이블
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_settings(
+            user_id INTEGER PRIMARY KEY,
+            theme TEXT,               -- 'light' or 'dark'
+            primary TEXT,             -- 포인트 컬러
+            bg_style TEXT,            -- 'pastel' or 'matte'
+            font_scale TEXT,          -- 'sm'/'md'/'lg'
+            updated_at TEXT,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
     conn.commit()
     return conn
 
-# ===== 사용자 =====
+# 사용자
 def create_user(conn, email, name, password_plain):
     c = conn.cursor()
     pw_hash = bcrypt.hash(password_plain)
     c.execute("INSERT INTO users(email, name, password_hash) VALUES(?, ?, ?)",
               (email, name, pw_hash))
     conn.commit()
+    # 기본 테마 설정도 같이 생성
+    upsert_user_settings(conn, c.lastrowid, theme="light", primary=BASE_PALETTE["primary"],
+                         bg_style="pastel", font_scale="md")
     return c.lastrowid
 
 def get_user_by_email(conn, email):
@@ -102,7 +119,7 @@ def get_user_by_email(conn, email):
     c.execute("SELECT id, email, name, password_hash FROM users WHERE email = ?", (email,))
     return c.fetchone()
 
-# ===== 일기 =====
+# 일기
 def insert_entry(conn, user_id, d, mood_key, mood_score, tags, content):
     c = conn.cursor()
     c.execute("""
@@ -143,7 +160,7 @@ def get_entries(conn, user_id, q=None, mood_key=None, tag=None):
     c.execute(base, params)
     return c.fetchall()
 
-# ===== 파일 =====
+# 파일
 def insert_file(conn, entry_id, kind, path, original_name):
     c = conn.cursor()
     c.execute("INSERT INTO files(entry_id, kind, path, original_name) VALUES (?, ?, ?, ?)",
@@ -209,43 +226,99 @@ def get_entries_with_files(conn, user_id, mood_key=None, q=None, tag=None):
         data.append((r, fs))
     return data
 
-# ===== 스타일 =====
-st.set_page_config(page_title=APP_TITLE, page_icon="EMOJI_7", layout="centered")
-st.markdown(f"""
-<style>
-:root {{
-  --primary: {PALETTE["primary"]};
-  --accent:  {PALETTE["accent"]};
-  --mint:    {PALETTE["mint"]};
-  --bgsoft:  {PALETTE["bg_soft"]};
-  --text:    {PALETTE["text"]};
-}}
-.stApp {{
-  background: linear-gradient(180deg, #FFFFFF 0%, var(--bgsoft) 100%);
-  color: var(--text);
-}}
-.stButton>button[kind="primary"] {{
-  background-color: var(--primary); color: white;
-  border: 0; border-radius: 10px;
-}}
-.emotion-badge {{
-  display:inline-block; padding:4px 10px; border-radius:999px;
-  background: var(--accent); color:#fff; font-weight:600; margin-right:6px;
-}}
-.chip {{
-  display:inline-block; padding:2px 8px; border-radius:999px;
-  background:#FFD1E0; margin-right:6px; color:#5A3C45;
-}}
-.card {{
-  border-radius:14px; padding:12px; background:#FFFFFF;
-  box-shadow:0 6px 20px rgba(0,0,0,0.06); margin-bottom:12px;
-}}
-</style>
-""", unsafe_allow_html=True)
+# ================== 사용자 설정(테마) ==================
+def get_user_settings(conn, user_id):
+    c = conn.cursor()
+    c.execute("""
+        SELECT theme, primary, bg_style, font_scale
+        FROM user_settings WHERE user_id=?
+    """, (user_id,))
+    row = c.fetchone()
+    if not row:
+        return {"theme":"light", "primary":BASE_PALETTE["primary"], "bg_style":"pastel", "font_scale":"md"}
+    return {"theme":row[0], "primary":row[1], "bg_style":row[2], "font_scale":row[3]}
 
+def upsert_user_settings(conn, user_id, theme, primary, bg_style, font_scale):
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO user_settings(user_id, theme, primary, bg_style, font_scale, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            theme=excluded.theme,
+            primary=excluded.primary,
+            bg_style=excluded.bg_style,
+            font_scale=excluded.font_scale,
+            updated_at=excluded.updated_at
+    """, (user_id, theme, primary, bg_style, font_scale, datetime.utcnow().isoformat()))
+    conn.commit()
+
+# ================== 유틸 ==================
+def label_to_key(label: str) -> str:
+    for e in EMOTIONS:
+        if e["label"] == label:
+            return e["key"]
+    if label in EMO_KEYS:
+        return label
+    return "neutral"
+
+def key_to_label(key: str) -> str:
+    return EMO_KEY_TO_LABEL.get(key, "EMOJI_7 보통")
+
+def build_css(theme: str, primary: str, bg_style: str, font_scale: str):
+    # 글꼴 크기 스케일
+    font_map = {"sm":"14px", "md":"16px", "lg":"18px"}
+    base_font = font_map.get(font_scale, "16px")
+
+    if theme == "dark":
+        app_bg = BASE_PALETTE["bg_dark"]
+        text_c = BASE_PALETTE["text_dark"]
+        card_bg = BASE_PALETTE["card_dark"]
+        chip_bg = "#2A2F3A"
+        chip_fg = "#E9E2E6"
+        badge_bg = primary
+        gradient = f"linear-gradient(180deg, {app_bg} 0%, {app_bg} 100%)"
+    else:
+        app_bg = "#FFFFFF" if bg_style == "matte" else f"linear-gradient(180deg, #FFFFFF 0%, {BASE_PALETTE['bg_soft']} 100%)"
+        text_c = BASE_PALETTE["text"]
+        card_bg = "#FFFFFF"
+        chip_bg = "#FFD1E0"          # 라임 배제, 파스텔 핑크
+        chip_fg = "#5A3C45"
+        badge_bg = BASE_PALETTE["accent"]
+        gradient = app_bg
+
+    css = f"""
+    <style>
+    html, body, .stApp {{
+        color: {text_c};
+        font-size: {base_font};
+        background: {gradient};
+    }}
+    .stButton>button[kind="primary"] {{
+        background-color: {primary};
+        color: white;
+        border: 0; border-radius: 10px;
+    }}
+    .emotion-badge {{
+        display:inline-block; padding:4px 10px; border-radius:999px;
+        background: {badge_bg}; color:#fff; font-weight:600; margin-right:6px;
+    }}
+    .chip {{
+        display:inline-block; padding:2px 8px; border-radius:999px;
+        background:{chip_bg}; margin-right:6px; color:{chip_fg};
+    }}
+    .card {{
+        border-radius:14px; padding:12px; background:{card_bg};
+        box-shadow:0 6px 20px rgba(0,0,0,0.06); margin-bottom:12px;
+        border: { '1px solid #2A2F3A' if theme=='dark' else 'none' };
+    }}
+    </style>
+    """
+    return css
+
+# ================== 앱 시작/세션 ==================
+st.set_page_config(page_title=APP_TITLE, page_icon="EMOJI_8", layout="centered")
 st.title(APP_TITLE)
 
-# ===== 세션 =====
 if "user" not in st.session_state:
     st.session_state.user = None
 if "authed" not in st.session_state:
@@ -253,25 +326,10 @@ if "authed" not in st.session_state:
 
 conn = init_db()
 
-# ===== 유틸: 감정 label <-> key 변환 =====
-def label_to_key(label: str) -> str:
-    # "EMOJI_8 행복" 같은 라벨을 저장용 키로 변환
-    for e in EMOTIONS:
-        if e["label"] == label:
-            return e["key"]
-    # 혹시 직접 키를 전달받은 경우 그대로 사용
-    if label in EMO_KEYS:
-        return label
-    return "neutral"
-
-def key_to_label(key: str) -> str:
-    return EMO_KEY_TO_LABEL.get(key, "EMOJI_9 보통")
-
-# ===== 인증 뷰 =====
+# ================== 인증 뷰 ==================
 def auth_view():
     tabs = st.tabs(["로그인", "회원가입"])
 
-    # 로그인
     with tabs[0]:
         st.subheader("로그인")
         email = st.text_input("이메일", key="login_email")
@@ -295,7 +353,6 @@ def auth_view():
         if col2.button("초기화", use_container_width=True, key="login_reset"):
             st.rerun()
 
-    # 회원가입(폼 컨테이너로 안전 처리)
     with tabs[1]:
         st.subheader("회원가입")
         with st.container():
@@ -307,7 +364,6 @@ def auth_view():
                 pw2 = st.text_input("비밀번호 확인", type="password", key="pw2")
                 agreed = st.checkbox("이용 약관에 동의합니다", key="tos_agree")
                 submit_signup = st.form_submit_button("회원가입", type="primary")
-
             if submit_signup:
                 if not email_s or not pw1:
                     st.warning("이메일과 비밀번호를 입력해 주세요.")
@@ -319,16 +375,65 @@ def auth_view():
                     try:
                         create_user(conn, email_s.strip(), (name_s or "").strip(), pw1)
                         st.success("회원가입이 완료되었습니다. 상단의 '로그인' 탭에서 로그인해 주세요.")
-                        # 폼 입력 초기화
                         for k in ["email_s", "name_s", "pw1", "pw2", "tos_agree"]:
                             if k in st.session_state:
                                 del st.session_state[k]
                     except sqlite3.IntegrityError:
                         st.error("이미 존재하는 이메일입니다.")
 
-# ===== 메인 뷰 =====
+# ================== 테마 설정 사이드바 ==================
+def theme_sidebar(user_id):
+    settings = get_user_settings(conn, user_id)
+
+    with st.sidebar:
+        st.markdown("설정")
+        # 테마 토글(라이트/다크)
+        theme = st.radio("테마", options=["light", "dark"],
+                         index=0 if settings["theme"]=="light" else 1, horizontal=True, key="theme_radio")
+
+        # 포인트 색(라임 제외)
+        color_options = {
+            "코랄": "#FF7A9E",
+            "라일락": "#B39DDB",
+            "청록": "#6EC6C1",
+            "살몬": "#FF9EBB",
+            "라일락-라이트": "#C6B6F3",
+            "민트-라이트": "#88D5D1"
+        }
+        default_idx = list(color_options.values()).index(settings["primary"]) if settings["primary"] in color_options.values() else 0
+        color_label = st.selectbox("포인트 색상", list(color_options.keys()), index=default_idx, key="primary_color_sel")
+        primary = color_options[color_label]
+
+        # 배경 톤
+        bg_style = st.radio("배경 톤", options=["pastel", "matte"],
+                            index=0 if settings["bg_style"]=="pastel" else 1, horizontal=True, key="bg_style_radio")
+
+        # 글꼴 크기
+        font_names = {"작게":"sm", "보통":"md", "크게":"lg"}
+        inv_font = {v:k for k,v in font_names.items()}
+        font_sel = st.selectbox("글꼴 크기", list(font_names.keys()),
+                                index=["sm","md","lg"].index(settings["font_scale"]) if settings["font_scale"] in ["sm","md","lg"] else 1,
+                                key="font_scale_sel")
+
+        colA, colB = st.columns(2)
+        if colA.button("저장", type="primary", use_container_width=True, key="save_theme_btn"):
+            upsert_user_settings(conn, user_id, theme=theme, primary=primary,
+                                 bg_style=bg_style, font_scale=font_names[font_sel])
+            st.success("테마가 저장되고 적용되었습니다.")
+            st.rerun()
+        if colB.button("리셋", use_container_width=True, key="reset_theme_btn"):
+            upsert_user_settings(conn, user_id, theme="light", primary=BASE_PALETTE["primary"],
+                                 bg_style="pastel", font_scale="md")
+            st.info("기본 테마로 돌아갔습니다.")
+            st.rerun()
+
+        st.markdown("---")
+
+# ================== 메인 뷰 ==================
 def main_view():
     user = st.session_state.user
+
+    # 사이드바: 로그아웃 + 테마 설정
     with st.sidebar:
         st.markdown(f"안녕하세요, {user.get('name') or user['email']}님!")
         if st.button("로그아웃", key="logout_btn"):
@@ -336,7 +441,15 @@ def main_view():
             st.session_state.authed = False
             st.rerun()
         st.markdown("---")
-        st.caption("오늘 하루도 아름답게!")
+
+    # 테마 설정 UI
+    theme_sidebar(user["id"])
+
+    # 현재 사용자 테마 로드 후 CSS 적용
+    s = get_user_settings(conn, user["id"])
+    st.markdown(build_css(theme=s["theme"], primary=s["primary"],
+                          bg_style=s["bg_style"], font_scale=s["font_scale"]),
+                unsafe_allow_html=True)
 
     tab_write, tab_list, tab_stats, tab_backup = st.tabs(["작성하기", "목록/검색", "통계", "백업"])
 
@@ -417,8 +530,9 @@ def main_view():
                 if st.session_state.get(f"editing_{id_}", False):
                     st.info("아래에서 내용을 수정하세요.")
                     ed_d = st.date_input("날짜", value=date.fromisoformat(d_), key=f"ed_d_{id_}")
-                    # 편집 시에도 라벨-키 분리 유지
-                    ed_label = st.selectbox("감정", EMO_LABELS, index=max(0, EMO_LABELS.index(mood_label_saved)) if mood_label_saved in EMO_LABELS else 2, key=f"ed_m_{id_}")
+                    ed_label = st.selectbox("감정", EMO_LABELS,
+                        index=max(0, EMO_LABELS.index(mood_label_saved)) if mood_label_saved in EMO_LABELS else 2,
+                        key=f"ed_m_{id_}")
                     ed_key = label_to_key(ed_label)
                     ed_s = st.slider("감정 강도", 1, 5, score_, key=f"ed_s_{id_}")
                     ed_t = st.text_input("태그", value=tags_ or "", key=f"ed_t_{id_}")
@@ -441,21 +555,20 @@ def main_view():
         if df.empty:
             st.info("통계를 보여줄 데이터가 아직 없어요.")
         else:
-            # 키를 라벨로 변환해서 차트 표시(이모지 포함)
             df["mood_label"] = df["mood"].map(key_to_label)
             mood_counts = df["mood_label"].value_counts().reset_index()
             mood_counts.columns = ["감정", "횟수"]
             chart = alt.Chart(mood_counts).mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6).encode(
                 x=alt.X("감정:N", sort="-y", title="감정"),
                 y=alt.Y("횟수:Q", title="작성 수"),
-                color=alt.Color("감정:N", scale=alt.Scale(range=[PALETTE["primary"], PALETTE["accent"], PALETTE["mint"], "#FF9EBB", "#C6B6F3", "#88D5D1"]))
+                color=alt.Color("감정:N", scale=alt.Scale(range=[BASE_PALETTE["primary"], BASE_PALETTE["accent"], BASE_PALETTE["mint"], "#FF9EBB", "#C6B6F3", "#88D5D1"]))
             )
             st.altair_chart(chart, use_container_width=True)
 
             df["d"] = pd.to_datetime(df["d"])
             by_month = df.groupby(df["d"].dt.to_period("M")).size().reset_index(name="count")
             by_month["월"] = by_month["d"].astype(str)
-            line = alt.Chart(by_month).mark_line(point=True, strokeWidth=3, color=PALETTE["primary"]).encode(
+            line = alt.Chart(by_month).mark_line(point=True, strokeWidth=3, color=s["primary"]).encode(
                 x=alt.X("월:N", title="월"),
                 y=alt.Y("count:Q", title="작성 수")
             )
@@ -472,7 +585,7 @@ def main_view():
         else:
             st.info("DB 파일이 아직 생성되지 않았습니다. 먼저 일기를 한 번 저장해 보세요.")
 
-# ===== 라우팅 =====
+# ================== 라우팅 ==================
 if not st.session_state.authed or not st.session_state.user:
     auth_view()
 else:
