@@ -19,7 +19,7 @@ APP_DB = "study_mate_subjectless.db"
 TODAY = dt.date.today().isoformat()
 
 # ===============================
-# 보안 유틸: 비밀번호 해시/검증
+# 보안 유틸
 # ===============================
 def hash_password(password: str, salt: bytes = None) -> tuple[str, bytes]:
     if salt is None:
@@ -33,9 +33,6 @@ def verify_password(password: str, hashed_hex: str, salt: bytes) -> bool:
     dk_check, _ = hash_password(password, salt)
     return hmac.compare_digest(dk_check, hashed_hex)
 
-# ===============================
-# rerun 유틸
-# ===============================
 def safe_rerun():
     if hasattr(st, "rerun"):
         st.rerun()
@@ -48,7 +45,6 @@ def safe_rerun():
 def init_db():
     with closing(sqlite3.connect(APP_DB)) as conn:
         c = conn.cursor()
-        # 사용자 계정
         c.execute("""
         CREATE TABLE IF NOT EXISTS users(
             id TEXT PRIMARY KEY,
@@ -59,7 +55,6 @@ def init_db():
             created_at TEXT
         );
         """)
-        # 하루 상태(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS daily(
             date TEXT,
@@ -73,7 +68,6 @@ def init_db():
             PRIMARY KEY(date, user_id)
         );
         """)
-        # 공부 세션 로그(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS sessions(
             id TEXT PRIMARY KEY,
@@ -87,7 +81,6 @@ def init_db():
             difficulty INTEGER
         );
         """)
-        # 보유 아이템(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS inventory(
             item_id TEXT PRIMARY KEY,
@@ -96,7 +89,6 @@ def init_db():
             name TEXT
         );
         """)
-        # 보상/구매 로그(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS rewards(
             id TEXT PRIMARY KEY,
@@ -107,7 +99,6 @@ def init_db():
             coins_change INTEGER
         );
         """)
-        # 길드(샘플) + 내 길드(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS guild(
             id TEXT PRIMARY KEY,
@@ -121,7 +112,6 @@ def init_db():
             name TEXT
         );
         """)
-        # 사용자 정의 과목(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS subjects(
             name TEXT,
@@ -129,7 +119,6 @@ def init_db():
             PRIMARY KEY (name, user_id)
         );
         """)
-        # 투두리스트(유저별)
         c.execute("""
         CREATE TABLE IF NOT EXISTS todos(
             id TEXT PRIMARY KEY,
@@ -194,8 +183,10 @@ def create_user(email: str, username: str, password: str) -> tuple[bool, str]:
     try:
         with closing(get_conn()) as conn:
             c = conn.cursor()
-            c.execute("INSERT INTO users(id, email, username, pw_hash, pw_salt, created_at) VALUES(?,?,?,?,?,?)",
-                      (uid, email, username, pw_hex, salt, dt.datetime.now().isoformat()))
+            c.execute(
+                "INSERT INTO users(id, email, username, pw_hash, pw_salt, created_at) VALUES(?,?,?,?,?,?)",
+                (uid, email, username, pw_hex, salt, dt.datetime.now().isoformat())
+            )
             conn.commit()
         return True, uid
     except sqlite3.IntegrityError:
@@ -481,7 +472,7 @@ def apply_theme(theme_name):
     """
     st.markdown(css, unsafe_allow_html=True)
 
-# 로그인 여부에 따른 안전한 테마 적용
+# 로그인 여부에 따라 안전하게 테마 적용
 if st.session_state.user_id:
     try:
         d_for_theme = get_daily()
@@ -847,7 +838,6 @@ def render_todo():
     st.header("투두리스트 · 공부 계획")
     st.caption("계획을 완료하면 설정한 코인이 자동 지급돼요!")
 
-    # 필터
     box1, box2, box3 = st.columns(3)
     with box1:
         if st.button("오늘 할 일 보기", key="todo_filter_today"):
@@ -865,7 +855,6 @@ def render_todo():
     only_today = st.session_state.todo_filter == "today"
     show_all = st.session_state.todo_filter == "all"
 
-    # 추가 폼
     st.subheader("새 계획 추가")
     subjects = get_subjects()
     col_a, col_b = st.columns([3,2])
@@ -901,7 +890,6 @@ def render_todo():
 
     st.markdown("---")
 
-    # 목록
     df = get_todos(show_all=show_all, only_today=only_today)
     if df is None or df.empty:
         st.info("표시할 계획이 없어요. 새로운 계획을 추가해 보세요!")
