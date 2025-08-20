@@ -81,12 +81,6 @@ def inject_theme(theme=None):
     .nav-right {{
         display: flex; gap: 8px; justify-content: flex-end; align-items: center;
     }}
-    .rank-highlight {{
-        background: #FFF4FE;
-        border: 2px solid #FFD5EF;
-        border-radius: 12px;
-        padding: 8px 12px;
-    }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -144,11 +138,12 @@ def init_state():
         st.session_state.daily_bonus_date = None
     if "__last_tick__" not in st.session_state:
         st.session_state["__last_tick__"] = time.time()
-    # 참여방 상태
+    # 참여방: 고정 3개(곰/여우/올빼미)
     if "rooms" not in st.session_state:
-        # 로컬 메모리 상의 방 목록(간단 더미 예시 포함)
         st.session_state.rooms = {
-            "공부방-1": {"title":"공부방-1", "desc":"매일 3시간 이상 집중!", "members":["토끼","별빛"], "notices":[]}
+            "곰": {"title":"곰", "desc":"묵직하게 꾸준히! 오늘도 3시간 이상!", "members": ["곰돌이A","곰돌이B"], "notices":[]},
+            "여우": {"title":"여우", "desc":"영리하게 효율적 공부!", "members": ["여우K","여우L"], "notices":[]},
+            "올빼미": {"title":"올빼미", "desc":"야간 집중, 새벽 감성!", "members": ["올빼미X","올빼미Y"], "notices":[]},
         }
     if "current_room" not in st.session_state:
         st.session_state.current_room = None
@@ -262,7 +257,6 @@ def safe_autorefresh(interval_ms=1000, key="__tick__"):
     now = time.time()
     if now - st.session_state["__last_tick__"] >= interval_ms / 1000.0:
         st.session_state["__last_tick__"] = now
-        # 쿼리 파라미터를 토글해 rerun 유도
         qp = st.query_params
         cur = int(qp.get(key, ["0"])[0]) if key in qp else 0
         st.query_params[key] = str((cur + 1) % 1000000)
@@ -289,28 +283,26 @@ with right:
         daily_df_header = build_daily_stats(df_all)
         streak_val = calc_streak(daily_df_header)
         c4.metric("연속 달성", f"{streak_val}일 🔥")
-        # 참여방 상단바 버튼
         go_room = c5.button("참여방 바로가기", key="goto_room_top")
         st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
 
-# =========================
-# 탭: 타이머 | 캘린더 | 참여방 | 상점 | 설정
-# =========================
+# 상단 버튼 UX 힌트(선택 탭 쿼리)
 if go_room:
-    # 상단 버튼을 누르면 기본 탭 선택 힌트를 위해 쿼리값만 살짝 변경(단순 UX 트릭)
     qp = st.query_params
     qp["tab"] = "room"
     st.query_params = qp
 
+# =========================
+# 탭: 타이머 | 캘린더 | 참여방 | 상점 | 설정
+# =========================
 tab_timer, tab_calendar, tab_room, tab_shop, tab_settings = st.tabs(["타이머", "캘린더", "참여방", "상점", "설정"])
 
 # =========================
 # 타이머 탭
 # =========================
 with tab_timer:
-    # 실행 중일 때 1초마다 자동 리렌더링 유도
     safe_autorefresh(interval_ms=1000, key="timer_tick")
 
     st.markdown("### 타이머")
@@ -341,7 +333,6 @@ with tab_timer:
         pause_btn = c2.button("일시정지 ⏸️", key="timer_pause")
         stop_btn  = c3.button("종료 ⏹️", key="timer_stop")
 
-        # 타이머 로직
         if start_btn and not st.session_state.running:
             st.session_state.running = True
             if st.session_state.start_time is None:
@@ -372,7 +363,6 @@ with tab_timer:
                 })
                 ensure_coin_reward(duration_min)
 
-                # 목표 달성 보너스(하루 1회)
                 df_tmp = get_sessions_df()
                 tdf = df_tmp[pd.to_datetime(df_tmp["start"]).dt.date == date.today()]
                 if int(tdf["duration_min"].sum()) >= st.session_state.daily_goal_min:
@@ -382,13 +372,11 @@ with tab_timer:
                         st.balloons()
                         st.success("오늘 목표 달성! 보너스 50코인 지급 🎊")
 
-            # 리셋
             st.session_state.running = False
             st.session_state.start_time = None
             st.session_state.elapsed_sec = 0
             st.session_state.pomo_end_at = None
 
-        # 표시/갱신
         if st.session_state.running:
             if st.session_state.pomo_mode:
                 if st.session_state.pomo_end_at is None:
@@ -449,7 +437,6 @@ with tab_calendar:
     next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
     month_end = next_month - timedelta(days=1)
 
-    # 해당 월 날짜 목록
     days = []
     d = month_start
     while d <= month_end:
@@ -457,8 +444,8 @@ with tab_calendar:
         d += timedelta(days=1)
 
     st.write("일  월  화  수  목  금  토")
-    first_wday = month_start.weekday()  # 월=0 ... 일=6
-    start_shift = (first_wday + 1) % 7  # 일요일=0 기준
+    first_wday = month_start.weekday()
+    start_shift = (first_wday + 1) % 7
 
     grid = []
     week = [None]*start_shift
@@ -472,7 +459,7 @@ with tab_calendar:
             week.append(None)
         grid.append(week)
 
-    for wk_i, wk in enumerate(grid):
+    for wk in grid:
         c = st.columns(7)
         for i, d_ in enumerate(wk):
             with c[i]:
@@ -502,56 +489,40 @@ with tab_calendar:
             st.bar_chart(pie.set_index("subject"))
 
 # =========================
-# 참여방 탭
+# 참여방 탭(고정 3개 방: 곰/여우/올빼미)
 # =========================
 with tab_room:
     st.markdown("### 참여방")
-    # 방 리스트
-    cols = st.columns([2, 1])
-    with cols[0]:
-        st.markdown("#### 방 목록")
-        if st.session_state.rooms:
-            data = []
-            for rid, r in st.session_state.rooms.items():
-                data.append({"방 이름": r["title"], "설명": r.get("desc",""), "인원": len(r.get("members",[]))})
-            st.dataframe(pd.DataFrame(data), use_container_width=True, height=240)
-        else:
-            st.info("아직 방이 없어요. 새로 만들어보세요!")
+    st.caption("원하는 방을 선택해 참여하세요. 방 생성 기능은 없으며, ‘곰/여우/올빼미’ 기본 방만 운영됩니다.")
 
-    with cols[1]:
-        st.markdown("#### 방 생성/참여")
-        new_title = st.text_input("새 방 이름", key="room_new_title")
-        new_desc = st.text_input("설명(선택)", key="room_new_desc")
-        if st.button("방 만들기", key="btn_make_room"):
-            title = new_title.strip()
-            if not title:
-                st.warning("방 이름을 입력해 주세요.")
-            elif title in st.session_state.rooms:
-                st.warning("이미 존재하는 방 이름입니다.")
-            else:
-                st.session_state.rooms[title] = {"title": title, "desc": new_desc, "members": [], "notices":[]}
-                st.success(f"'{title}' 방이 생성되었어요!")
-
-        join_title = st.text_input("참여할 방 이름", key="room_join_title")
-        if st.button("참여하기", key="btn_join_room"):
-            title = join_title.strip()
-            if title in st.session_state.rooms:
-                st.session_state.current_room = title
-                # 멤버 등록(중복 방지)
-                room = st.session_state.rooms[title]
-                if st.session_state.nickname not in room["members"]:
-                    room["members"].append(st.session_state.nickname)
-                st.success(f"'{title}' 방에 참여했어요!")
-            else:
-                st.error("해당 방이 존재하지 않아요.")
+    # 카드형 선택 UI
+    cols = st.columns(3)
+    room_defs = [
+        ("곰", "🐻", st.session_state.rooms["곰"]["desc"]),
+        ("여우", "🦊", st.session_state.rooms["여우"]["desc"]),
+        ("올빼미", "🦉", st.session_state.rooms["올빼미"]["desc"]),
+    ]
+    for idx, (rid, emoji, desc) in enumerate(room_defs):
+        with cols[idx]:
+            st.markdown('<div class="store-card">', unsafe_allow_html=True)
+            st.markdown(f"{emoji} {rid} 방")
+            st.write(desc)
+            members = st.session_state.rooms[rid]["members"]
+            st.write(f"현재 인원: {len(members)}명")
+            if st.button(f"{rid} 방 입장", key=f"enter_room_{rid}"):
+                st.session_state.current_room = rid
+                # 내 닉네임을 멤버에 등록(중복 방지)
+                if st.session_state.nickname not in st.session_state.rooms[rid]["members"]:
+                    st.session_state.rooms[rid]["members"].append(st.session_state.nickname)
+                st.success(f"'{rid}' 방에 입장했어요!")
+            st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("---")
 
-    # 현재 참여 중인 방
     cur = st.session_state.current_room
     if cur and cur in st.session_state.rooms:
         room = st.session_state.rooms[cur]
-        st.markdown(f"#### 현재 방: {room['title']}")
+        st.markdown(f"#### 현재 방: {room['title']} {('🐻' if cur=='곰' else '🦊' if cur=='여우' else '🦉')}")
         st.write(f"설명: {room.get('desc','')}")
         c1, c2 = st.columns([2,1])
         with c1:
@@ -564,32 +535,24 @@ with tab_room:
                     st.success("메시지를 올렸어요!")
                 else:
                     st.warning("메시지를 입력해 주세요.")
-            # 공지 목록
             if room["notices"]:
                 ndf = pd.DataFrame(room["notices"])
-                ndf = ndf[["at","user","text"]].iloc[::-1]  # 최신순
+                ndf = ndf[["at","user","text"]].iloc[::-1]
                 st.dataframe(ndf, use_container_width=True, height=240)
             else:
                 st.info("아직 공지나 메시지가 없어요.")
         with c2:
             st.markdown("##### 현재 멤버")
             members = room.get("members", [])
-            # 더미 멤버 보강(보이는 재미용)
-            demo = [m for m in members]
-            if "토끼" not in demo:
-                demo.append("토끼")
-            if "별빛" not in demo:
-                demo.append("별빛")
-            st.table(pd.DataFrame({"닉네임": demo}))
+            st.table(pd.DataFrame({"닉네임": members}))
 
-        # 방 나가기
         if st.button("방 나가기", key="btn_leave_room"):
             if st.session_state.nickname in room["members"]:
                 room["members"].remove(st.session_state.nickname)
             st.session_state.current_room = None
             st.success("방에서 나왔어요.")
     else:
-        st.info("참여 중인 방이 없습니다. 방에 참여하거나 새로 만들어 보세요.")
+        st.info("아직 어떤 방에도 들어가 있지 않아요. 위에서 방을 선택해 입장해 보세요.")
 
 # =========================
 # 상점 탭
