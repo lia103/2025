@@ -7,10 +7,9 @@ from PIL import Image
 import pandas as pd
 import altair as alt
 
-# ===== 비밀번호 해시 라이브러리 선택 =====
-# 기본: passlib.bcrypt 사용
+# ===== 비밀번호 해시 라이브러리 =====
 from passlib.hash import bcrypt
-# 만약 passlib/bcrypt 설치가 어려우면, 아래 주석 해제하고 위 import를 주석 처리하세요.
+# 설치가 어려우면 아래 PBKDF2 대체를 사용(위 import 주석 처리)
 # import hashlib, hmac
 # def hash_pw(pw: str, salt: bytes | None = None):
 #     import os as _os
@@ -76,7 +75,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS files(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entry_id INTEGER,
-            kind TEXT,
+            kind TEXT,              -- 'image' / 'audio'
             path TEXT,
             original_name TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -89,10 +88,7 @@ def init_db():
 # ===== 사용자 =====
 def create_user(conn, email, name, password_plain):
     c = conn.cursor()
-    # passlib 사용
-    pw_hash = bcrypt.hash(password_plain)
-    # PBKDF2 대체 사용 시:
-    # pw_hash = hash_pw(password_plain)
+    pw_hash = bcrypt.hash(password_plain)  # PBKDF2 대체 시: hash_pw(password_plain)
     c.execute("INSERT INTO users(email, name, password_hash) VALUES(?, ?, ?)",
               (email, name, pw_hash))
     conn.commit()
@@ -226,8 +222,7 @@ st.markdown(f"""
   color: var(--text);
 }}
 .stButton>button[kind="primary"] {{
-  background-color: var(--primary);
-  color: white;
+  background-color: var(--primary); color: white;
   border: 0; border-radius: 10px;
 }}
 .emotion-badge {{
@@ -252,28 +247,27 @@ if "user" not in st.session_state:
     st.session_state.user = None
 if "authed" not in st.session_state:
     st.session_state.authed = False
+
 conn = init_db()
 
 # ===== 인증 뷰 =====
 def auth_view():
     tabs = st.tabs(["로그인", "회원가입"])
 
+    # 로그인 탭
     with tabs[0]:
         st.subheader("로그인")
-        email = st.text_input("이메일")
-        password = st.text_input("비밀번호", type="password")
+        email = st.text_input("이메일", key="login_email")
+        password = st.text_input("비밀번호", type="password", key="login_pw")
         col1, col2 = st.columns(2)
-        if col1.button("로그인", type="primary", use_container_width=True):
-            user = get_user_by_email(conn, email)
+        if col1.button("로그인", type="primary", use_container_width=True, key="login_btn"):
+            user = get_user_by_email(conn, email.strip())
             ok = False
             if user:
-                # passlib 사용
                 try:
-                    ok = bcrypt.verify(password, user[3])
+                    ok = bcrypt.verify(password, user[3])   # PBKDF2 대체 시: ok = verify_pw(password, user[3])
                 except Exception:
                     ok = False
-                # PBKDF2 대체 사용 시:
-                # ok = verify_pw(password, user[3])
             if ok:
                 st.session_state.user = {"id": user[0], "email": user[1], "name": user[2]}
                 st.session_state.authed = True
@@ -281,26 +275,37 @@ def auth_view():
                 st.rerun()
             else:
                 st.error("이메일 또는 비밀번호가 올바르지 않습니다.")
-        if col2.button("초기화", use_container_width=True):
+        if col2.button("초기화", use_container_width=True, key="login_reset"):
             st.rerun()
 
+    # 회원가입 탭(컨테이너 + 고유 키로 충돌 방지)
     with tabs[1]:
         st.subheader("회원가입")
-        with st.form("signup_form", clear_on_submit=False):
-            email_s = st.text_input("이메일")
-            name_s = st.text_input("이름(선택)")
-            pw1 = st.text_input("비밀번호", type="password")
-            pw2 = st.text_input("비밀번호 확인", type="password")
-            ok_btn = st.form_submit_button("회원가입", type="primary")
-            if ok_btn:
+        with st.container():
+            with st.form(key="signup_form_v2", clear_on_submit=False):
+                colA, colB = st.columns(2)
+                email_s = colA.text_input("이메일", key="email_s")
+                name_s = colB.text_input("이름(선택)", key="name_s")
+                pw1 = st.text_input("비밀번호", type="password", key="pw1")
+                pw2 = st.text_input("비밀번호 확인", type="password", key="pw2")
+                agreed = st.checkbox("이용 약관에 동의합니다", key="tos_agree")
+                submit_signup = st.form_submit_button("회원가입", type="primary")
+
+            if submit_signup:
                 if not email_s or not pw1:
                     st.warning("이메일과 비밀번호를 입력해 주세요.")
                 elif pw1 != pw2:
                     st.warning("비밀번호가 서로 다릅니다.")
+                elif not agreed:
+                    st.warning("약관에 동의해 주세요.")
                 else:
                     try:
-                        create_user(conn, email_s, name_s, pw1)
-                        st.success("회원가입이 완료되었습니다. 로그인해 주세요.")
+                        create_user(conn, email_s.strip(), (name_s or "").strip(), pw1)
+                        st.success("회원가입이 완료되었습니다. 상단의 '로그인' 탭에서 로그인해 주세요.")
+                        # 폼 입력 초기화
+                        for k in ["email_s", "name_s", "pw1", "pw2", "tos_agree"]:
+                            if k in st.session_state:
+                                del st.session_state[k]
                     except sqlite3.IntegrityError:
                         st.error("이미 존재하는 이메일입니다.")
 
@@ -309,12 +314,12 @@ def main_view():
     user = st.session_state.user
     with st.sidebar:
         st.markdown(f"안녕하세요, {user.get('name') or user['email']}님!")
-        if st.button("로그아웃"):
+        if st.button("로그아웃", key="logout_btn"):
             st.session_state.user = None
             st.session_state.authed = False
             st.rerun()
         st.markdown("---")
-        st.caption("코랄/라일락/청록 톤으로 꾸몄어요. 라임색은 사용하지 않았습니다.")
+        st.caption("코랄/라일락/청록 톤으로 꾸몄습니다. 라임색은 제외했어요.")
 
     tab_write, tab_list, tab_stats, tab_backup = st.tabs(["작성하기", "목록/검색", "통계", "백업"])
 
@@ -322,18 +327,18 @@ def main_view():
     with tab_write:
         st.subheader("오늘의 일기 작성")
         c1, c2 = st.columns(2)
-        d = c1.date_input("날짜", value=date.today())
-        mood = c2.selectbox("감정", ["EMOJI_2 행복", "EMOJI_3 평온", "EMOJI_4 보통", "EMOJI_5 우울", "EMOJI_6 불안", "EMOJI_7 의욕"])
-        mood_score = st.slider("감정 강도(선택)", 1, 5, 3)
-        tags = st.text_input("태그 (쉼표로 구분)", placeholder="공부, 개발, 일상")
-        content = st.text_area("내용", height=200, placeholder="오늘 있었던 일들을 적어보세요...")
+        d = c1.date_input("날짜", value=date.today(), key="write_date")
+        mood = c2.selectbox("감정", ["EMOJI_2 행복", "EMOJI_3 평온", "EMOJI_4 보통", "EMOJI_5 우울", "EMOJI_6 불안", "EMOJI_7 의욕"], key="write_mood")
+        mood_score = st.slider("감정 강도(선택)", 1, 5, 3, key="write_score")
+        tags = st.text_input("태그 (쉼표로 구분)", placeholder="공부, 개발, 일상", key="write_tags")
+        content = st.text_area("내용", height=200, placeholder="오늘 있었던 일들을 적어보세요...", key="write_content")
 
         st.markdown("첨부 파일")
-        img_files = st.file_uploader("이미지 업로드", type=["png","jpg","jpeg","webp"], accept_multiple_files=True)
-        aud_files = st.file_uploader("음성 업로드", type=["mp3","wav","m4a","ogg"], accept_multiple_files=True)
+        img_files = st.file_uploader("이미지 업로드", type=["png","jpg","jpeg","webp"], accept_multiple_files=True, key="write_imgs")
+        aud_files = st.file_uploader("음성 업로드", type=["mp3","wav","m4a","ogg"], accept_multiple_files=True, key="write_auds")
 
-        if st.button("저장", type="primary", use_container_width=True):
-            if content.strip() or img_files or aud_files:
+        if st.button("저장", type="primary", use_container_width=True, key="save_entry_btn"):
+            if (content and content.strip()) or img_files or aud_files:
                 eid = insert_entry(conn, user["id"], d.isoformat(), mood, mood_score, tags, content)
                 if img_files:
                     for fpath, oname in save_uploaded_images(img_files):
@@ -350,10 +355,10 @@ def main_view():
     with tab_list:
         st.subheader("목록/검색")
         with st.expander("검색/필터", expanded=True):
-            q = st.text_input("키워드 검색", placeholder="내용 또는 태그")
+            q = st.text_input("키워드 검색", placeholder="내용 또는 태그", key="filter_q")
             c1, c2 = st.columns(2)
-            mood_f = c1.selectbox("감정 필터", ["(전체)","EMOJI_8 행복","EMOJI_9 평온","EMOJI_10 보통","EMOJI_11 우울","EMOJI_12 불안","EMOJI_13 의욕"])
-            tag_f = c2.text_input("태그 포함", placeholder="예: 개발")
+            mood_f = c1.selectbox("감정 필터", ["(전체)","EMOJI_8 행복","EMOJI_9 평온","EMOJI_10 보통","EMOJI_11 우울","EMOJI_12 불안","EMOJI_13 의욕"], key="filter_mood")
+            tag_f = c2.text_input("태그 포함", placeholder="예: 개발", key="filter_tag")
             mood_val = None if mood_f == "(전체)" else mood_f
 
         items = get_entries_with_files(conn, user["id"], mood=mood_val, q=q, tag=tag_f if tag_f else None)
@@ -439,7 +444,8 @@ def main_view():
         st.caption("데이터베이스 파일은 로컬에 저장됩니다. 아래 버튼으로 DB를 내려받을 수 있어요.")
         if os.path.exists(DB_PATH):
             with open(DB_PATH, "rb") as f:
-                st.download_button("DB 백업 다운로드(diary_backup.db)", data=f, file_name="diary_backup.db", mime="application/octet-stream")
+                st.download_button("DB 백업 다운로드(diary_backup.db)", data=f,
+                                   file_name="diary_backup.db", mime="application/octet-stream")
         else:
             st.info("DB 파일이 아직 생성되지 않았습니다. 먼저 일기를 한 번 저장해 보세요.")
 
