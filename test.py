@@ -34,6 +34,7 @@ def verify_password(password: str, hashed_hex: str, salt: bytes) -> bool:
     return hmac.compare_digest(dk_check, hashed_hex)
 
 def safe_rerun():
+    # rerun 남발 방지: 버튼/폼 이벤트 뒤에서만 호출되도록 사용
     if hasattr(st, "rerun"):
         st.rerun()
     else:
@@ -42,8 +43,12 @@ def safe_rerun():
 # ===============================
 # DB 초기화(최우선)
 # ===============================
+def get_conn():
+    # rerun 중복 접근 안정성 향상
+    return sqlite3.connect(APP_DB, check_same_thread=False)
+
 def init_db():
-    with closing(sqlite3.connect(APP_DB)) as conn:
+    with closing(get_conn()) as conn:
         c = conn.cursor()
         c.execute("""
         CREATE TABLE IF NOT EXISTS users(
@@ -135,29 +140,30 @@ def init_db():
         """)
         conn.commit()
 
-def get_conn():
-    return sqlite3.connect(APP_DB)
-
 init_db()
 
 # ===============================
 # 세션 상태
 # ===============================
-if "user_id" not in st.session_state:
-    st.session_state.user_id = None
-if "username" not in st.session_state:
-    st.session_state.username = None
+def init_session_state():
+    defaults = {
+        "user_id": None,
+        "username": None,
+        "timer_running": False,
+        "end_time": None,
+        "preset": 25,
+        "subject": None,
+        "distractions": 0,
+        "active_tab": "로그인",
+        "todo_filter": "pending",
+        "edit_id": None,
+        "edit_payload": None,
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
-if "timer_running" not in st.session_state:
-    st.session_state.timer_running = False
-if "end_time" not in st.session_state:
-    st.session_state.end_time = None
-if "preset" not in st.session_state:
-    st.session_state.preset = 25
-if "subject" not in st.session_state:
-    st.session_state.subject = None
-if "distractions" not in st.session_state:
-    st.session_state.distractions = 0
+init_session_state()
 
 TAB_AUTH = "로그인"
 TAB_HOME = "홈"
@@ -166,9 +172,6 @@ TAB_TIMER = "타이머"
 TAB_STATS = "통계"
 TAB_GUILD = "길드"
 TAB_SHOP = "상점"
-
-if "active_tab" not in st.session_state:
-    st.session_state.active_tab = TAB_AUTH
 
 # ===============================
 # 인증/계정
@@ -215,6 +218,8 @@ def require_login():
 # ===============================
 # Daily(유저별)
 # ===============================
+DEFAULT_DAILY = dict(date=TODAY, goal_min=120, coins=0, streak=0, theme="핑크", sound="벨", mascot="여우")
+
 def ensure_today():
     uid = st.session_state.user_id
     if not uid:
@@ -236,16 +241,22 @@ def ensure_today():
 def get_daily():
     uid = st.session_state.user_id
     if not uid:
-        return dict(date=TODAY, goal_min=120, coins=0, streak=0, theme="핑크", sound="벨", mascot="여우")
+        # 로그인 전에는 기본값 반환(사이드바 안전)
+        return DEFAULT_DAILY.copy()
     ensure_today()
     with closing(get_conn()) as conn:
         df = pd.read_sql_query("SELECT * FROM daily WHERE date=? AND user_id=?", conn, params=(TODAY, uid))
     if df.empty:
-        return dict(date=TODAY, goal_min=120, coins=0, streak=0, theme="핑크", sound="벨", mascot="여우")
+        return DEFAULT_DAILY.copy()
     r = df.iloc[0]
     return dict(
-        date=r["date"], goal_min=int(r["goal_min"]), coins=int(r["coins"]),
-        streak=int(r["streak"]), theme=r["theme"], sound=r["sound"], mascot=r["mascot"]
+        date=r.get("date", TODAY),
+        goal_min=int(r.get("goal_min", 120)),
+        coins=int(r.get("coins", 0)),
+        streak=int(r.get("streak", 0)),
+        theme=r.get("theme", "핑크"),
+        sound=r.get("sound", "벨"),
+        mascot=r.get("mascot", "여우"),
     )
 
 def update_daily(goal=None, coins_delta=0, theme=None, sound=None, mascot=None, overwrite_streak=None):
@@ -473,13 +484,10 @@ def apply_theme(theme_name):
     st.markdown(css, unsafe_allow_html=True)
 
 # 로그인 여부에 따라 안전하게 테마 적용
-if st.session_state.user_id:
-    try:
-        d_for_theme = get_daily()
-        apply_theme(d_for_theme["theme"])
-    except Exception:
-        apply_theme("핑크")
-else:
+try:
+    d_for_theme = get_daily()  # 로그인 전에도 기본값 반환
+    apply_theme(d_for_theme.get("theme", "핑크"))
+except Exception:
     apply_theme("핑크")
 
 # ===============================
@@ -491,6 +499,7 @@ if st.session_state.user_id:
 else:
     st.sidebar.info("로그인하지 않으셨습니다.")
 
+# 로그인 상태에서만 daily 관련 UI 노출
 if st.session_state.user_id:
     d_side = get_daily()
     new_goal = st.sidebar.slider("오늘 목표(분)", min_value=30, max_value=600, step=10, value=d_side["goal_min"], key="sb_goal_slider")
@@ -500,6 +509,7 @@ if st.session_state.user_id:
 
     st.sidebar.markdown("---")
     d_now = get_daily()
+    # d_now는 항상 키 보유(기본값 포함)
     st.sidebar.markdown(f"보유 코인: {d_now['coins']} • 스트릭: {d_now['streak']}일")
     st.sidebar.caption(f"현재 테마: {d_now['theme']} • 사운드: {d_now['sound']} • 마스코트: {d_now['mascot']}")
 
@@ -588,7 +598,8 @@ def render_home():
     st.title("오늘의 공부, 충분히 멋져요! ✨")
     total_min, df_today = get_today_summary()
     d = get_daily()
-    progress = min(total_min / max(1, d["goal_min"]), 1.0)
+    goal = max(1, d["goal_min"])
+    progress = min(total_min / goal, 1.0)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -1045,17 +1056,21 @@ def render_shop():
 # ===============================
 # 라우팅
 # ===============================
-if st.session_state.active_tab == TAB_AUTH:
-    render_auth()
-elif st.session_state.active_tab == TAB_HOME:
-    render_home()
-elif st.session_state.active_tab == TAB_TODO:
-    render_todo()
-elif st.session_state.active_tab == TAB_TIMER:
-    render_timer()
-elif st.session_state.active_tab == TAB_STATS:
-    render_stats()
-elif st.session_state.active_tab == TAB_GUILD:
-    render_guild()
-elif st.session_state.active_tab == TAB_SHOP:
-    render_shop()
+def render_router():
+    tab = st.session_state.active_tab
+    if tab == TAB_AUTH:
+        render_auth()
+    elif tab == TAB_HOME:
+        render_home()
+    elif tab == TAB_TODO:
+        render_todo()
+    elif tab == TAB_TIMER:
+        render_timer()
+    elif tab == TAB_STATS:
+        render_stats()
+    elif tab == TAB_GUILD:
+        render_guild()
+    elif tab == TAB_SHOP:
+        render_shop()
+
+render_router()
