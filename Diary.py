@@ -6,9 +6,24 @@ from datetime import date, datetime
 from PIL import Image
 import pandas as pd
 import altair as alt
-from passlib.hash import bcrypt
 
-# ====== 경로/상수 ======
+# ===== 비밀번호 해시 라이브러리 선택 =====
+# 기본: passlib.bcrypt 사용
+from passlib.hash import bcrypt
+# 만약 passlib/bcrypt 설치가 어려우면, 아래 주석 해제하고 위 import를 주석 처리하세요.
+# import hashlib, hmac
+# def hash_pw(pw: str, salt: bytes | None = None):
+#     import os as _os
+#     salt = salt or _os.urandom(16)
+#     dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, 100_000)
+#     return salt.hex() + ":" + dk.hex()
+# def verify_pw(pw: str, stored: str):
+#     salt_hex, dk_hex = stored.split(":")
+#     salt = bytes.fromhex(salt_hex)
+#     new_dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, 100_000).hex()
+#     return hmac.compare_digest(new_dk, dk_hex)
+
+# ===== 경로/상수 =====
 DB_PATH = "diary.db"
 MEDIA_DIR = "media"
 IMG_DIR = os.path.join(MEDIA_DIR, "images")
@@ -19,13 +34,13 @@ os.makedirs(AUD_DIR, exist_ok=True)
 APP_TITLE = "EMOJI_0 나의 일기장"
 PALETTE = {
     "primary": "#FF7A9E",   # 코랄핑크
-    "accent": "#B39DDB",    # 라일락
-    "mint": "#6EC6C1",      # 청록/민트
-    "bg_soft": "#FFF0F4",   # 아주 연한 핑크
-    "text": "#2B2B2B",
+    "accent":  "#B39DDB",   # 라일락
+    "mint":    "#6EC6C1",   # 청록
+    "bg_soft": "#FFF0F4",   # 연핑크 배경
+    "text":    "#2B2B2B",
 }
 
-# ====== DB 초기화 및 함수 ======
+# ===== DB =====
 def get_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON")
@@ -34,7 +49,6 @@ def get_conn():
 def init_db():
     conn = get_conn()
     c = conn.cursor()
-    # users: 회원가입/로그인
     c.execute("""
         CREATE TABLE IF NOT EXISTS users(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +58,6 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # entries: 일기
     c.execute("""
         CREATE TABLE IF NOT EXISTS entries(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,12 +72,11 @@ def init_db():
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         )
     """)
-    # files: 첨부
     c.execute("""
         CREATE TABLE IF NOT EXISTS files(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entry_id INTEGER,
-            kind TEXT, -- 'image' or 'audio'
+            kind TEXT,
             path TEXT,
             original_name TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -74,11 +86,15 @@ def init_db():
     conn.commit()
     return conn
 
-# --- 사용자 ---
-def create_user(conn, email, name, password):
+# ===== 사용자 =====
+def create_user(conn, email, name, password_plain):
     c = conn.cursor()
-    pw_hash = bcrypt.hash(password)
-    c.execute("INSERT INTO users(email, name, password_hash) VALUES(?, ?, ?)", (email, name, pw_hash))
+    # passlib 사용
+    pw_hash = bcrypt.hash(password_plain)
+    # PBKDF2 대체 사용 시:
+    # pw_hash = hash_pw(password_plain)
+    c.execute("INSERT INTO users(email, name, password_hash) VALUES(?, ?, ?)",
+              (email, name, pw_hash))
     conn.commit()
     return c.lastrowid
 
@@ -87,7 +103,7 @@ def get_user_by_email(conn, email):
     c.execute("SELECT id, email, name, password_hash FROM users WHERE email = ?", (email,))
     return c.fetchone()
 
-# --- 일기 ---
+# ===== 일기 =====
 def insert_entry(conn, user_id, d, mood, mood_score, tags, content):
     c = conn.cursor()
     c.execute("""
@@ -108,7 +124,6 @@ def update_entry(conn, entry_id, user_id, d, mood, mood_score, tags, content):
 
 def delete_entry(conn, entry_id, user_id):
     c = conn.cursor()
-    # files는 ON DELETE CASCADE를 쓰기 위해 entry 먼저 삭제
     c.execute("DELETE FROM entries WHERE id=? AND user_id=?", (entry_id, user_id))
     conn.commit()
 
@@ -129,16 +144,7 @@ def get_entries(conn, user_id, q=None, mood=None, tag=None):
     c.execute(base, params)
     return c.fetchall()
 
-def get_entry(conn, entry_id, user_id):
-    c = conn.cursor()
-    c.execute("""
-        SELECT id, d, mood, mood_score, tags, content
-        FROM entries
-        WHERE id=? AND user_id=?
-    """, (entry_id, user_id))
-    return c.fetchone()
-
-# --- 파일 ---
+# ===== 파일 =====
 def insert_file(conn, entry_id, kind, path, original_name):
     c = conn.cursor()
     c.execute("INSERT INTO files(entry_id, kind, path, original_name) VALUES (?, ?, ?, ?)",
@@ -146,7 +152,6 @@ def insert_file(conn, entry_id, kind, path, original_name):
     conn.commit()
 
 def get_files(conn, entry_id, user_id):
-    # entry 권한 확인을 위해 join
     c = conn.cursor()
     c.execute("""
         SELECT f.kind, f.path, f.original_name
@@ -158,9 +163,8 @@ def get_files(conn, entry_id, user_id):
     return c.fetchall()
 
 def delete_files_of_entry(conn, entry_id, user_id):
-    # 실제 파일 삭제 포함
     files = get_files(conn, entry_id, user_id)
-    for kind, path, _ in files:
+    for _, path, _ in files:
         if os.path.exists(path):
             try:
                 os.remove(path)
@@ -195,102 +199,90 @@ def save_uploaded_audios(files):
         saved.append((fpath, f.name))
     return saved
 
-# --- 목록+파일 묶어서 조회 ---
 def get_entries_with_files(conn, user_id, mood=None, q=None, tag=None):
     rows = get_entries(conn, user_id, q=q, mood=mood, tag=tag)
     data = []
     c = conn.cursor()
     for r in rows:
         eid = r[0]
-        c.execute("""
-            SELECT kind, path, original_name
-            FROM files
-            WHERE entry_id=?
-            ORDER BY id ASC
-        """, (eid,))
+        c.execute("SELECT kind, path, original_name FROM files WHERE entry_id=? ORDER BY id ASC", (eid,))
         fs = c.fetchall()
         data.append((r, fs))
     return data
 
-# ====== 앱 설정 ======
+# ===== 스타일 =====
 st.set_page_config(page_title=APP_TITLE, page_icon="EMOJI_1", layout="centered")
-
-# 기본 스타일 (라임색 배제, 파스텔 톤)
 st.markdown(f"""
-    <style>
-    :root {{
-        --primary: {PALETTE["primary"]};
-        --accent: {PALETTE["accent"]};
-        --mint: {PALETTE["mint"]};
-        --bgsoft: {PALETTE["bg_soft"]};
-        --text: {PALETTE["text"]};
-    }}
-    .stApp {{
-        background: linear-gradient(180deg, #FFFFFF 0%, var(--bgsoft) 100%);
-        color: var(--text);
-    }}
-    .stButton>button[kind="primary"] {{
-        background-color: var(--primary);
-        color: white;
-        border: 0;
-        border-radius: 10px;
-    }}
-    .emotion-badge {{
-        display: inline-block;
-        padding: 4px 10px;
-        border-radius: 999px;
-        background: var(--accent);
-        color: white;
-        font-weight: 600;
-        margin-right: 6px;
-    }}
-    .chip {{
-        display:inline-block;
-        padding: 2px 8px;
-        border-radius: 999px;
-        background: #FFD1E0;
-        margin-right: 6px;
-        color:#5A3C45;
-    }}
-    .card {{
-        border-radius: 14px;
-        padding: 12px;
-        background: #FFFFFF;
-        box-shadow: 0 6px 20px rgba(0,0,0,0.06);
-        margin-bottom: 12px;
-    }}
-    </style>
+<style>
+:root {{
+  --primary: {PALETTE["primary"]};
+  --accent:  {PALETTE["accent"]};
+  --mint:    {PALETTE["mint"]};
+  --bgsoft:  {PALETTE["bg_soft"]};
+  --text:    {PALETTE["text"]};
+}}
+.stApp {{
+  background: linear-gradient(180deg, #FFFFFF 0%, var(--bgsoft) 100%);
+  color: var(--text);
+}}
+.stButton>button[kind="primary"] {{
+  background-color: var(--primary);
+  color: white;
+  border: 0; border-radius: 10px;
+}}
+.emotion-badge {{
+  display:inline-block; padding:4px 10px; border-radius:999px;
+  background: var(--accent); color:#fff; font-weight:600; margin-right:6px;
+}}
+.chip {{
+  display:inline-block; padding:2px 8px; border-radius:999px;
+  background:#FFD1E0; margin-right:6px; color:#5A3C45;
+}}
+.card {{
+  border-radius:14px; padding:12px; background:#FFFFFF;
+  box-shadow:0 6px 20px rgba(0,0,0,0.06); margin-bottom:12px;
+}}
+</style>
 """, unsafe_allow_html=True)
 
 st.title(APP_TITLE)
 
-# 세션 상태
+# ===== 세션 =====
 if "user" not in st.session_state:
     st.session_state.user = None
 if "authed" not in st.session_state:
     st.session_state.authed = False
-
 conn = init_db()
 
-# ====== 인증 UI ======
+# ===== 인증 뷰 =====
 def auth_view():
     tabs = st.tabs(["로그인", "회원가입"])
+
     with tabs[0]:
         st.subheader("로그인")
         email = st.text_input("이메일")
         password = st.text_input("비밀번호", type="password")
-        col1, col2 = st.columns([1,1])
+        col1, col2 = st.columns(2)
         if col1.button("로그인", type="primary", use_container_width=True):
             user = get_user_by_email(conn, email)
-            if user and bcrypt.verify(password, user[3]):
+            ok = False
+            if user:
+                # passlib 사용
+                try:
+                    ok = bcrypt.verify(password, user[3])
+                except Exception:
+                    ok = False
+                # PBKDF2 대체 사용 시:
+                # ok = verify_pw(password, user[3])
+            if ok:
                 st.session_state.user = {"id": user[0], "email": user[1], "name": user[2]}
                 st.session_state.authed = True
                 st.success("환영합니다!")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("이메일 또는 비밀번호가 올바르지 않습니다.")
         if col2.button("초기화", use_container_width=True):
-            st.experimental_rerun()
+            st.rerun()
 
     with tabs[1]:
         st.subheader("회원가입")
@@ -299,20 +291,20 @@ def auth_view():
             name_s = st.text_input("이름(선택)")
             pw1 = st.text_input("비밀번호", type="password")
             pw2 = st.text_input("비밀번호 확인", type="password")
-            ok = st.form_submit_button("회원가입", type="primary")
-            if ok:
+            ok_btn = st.form_submit_button("회원가입", type="primary")
+            if ok_btn:
                 if not email_s or not pw1:
                     st.warning("이메일과 비밀번호를 입력해 주세요.")
                 elif pw1 != pw2:
                     st.warning("비밀번호가 서로 다릅니다.")
                 else:
                     try:
-                        uid = create_user(conn, email_s, name_s, pw1)
+                        create_user(conn, email_s, name_s, pw1)
                         st.success("회원가입이 완료되었습니다. 로그인해 주세요.")
                     except sqlite3.IntegrityError:
                         st.error("이미 존재하는 이메일입니다.")
 
-# ====== 메인 앱(인증 후) ======
+# ===== 메인 뷰 =====
 def main_view():
     user = st.session_state.user
     with st.sidebar:
@@ -320,9 +312,9 @@ def main_view():
         if st.button("로그아웃"):
             st.session_state.user = None
             st.session_state.authed = False
-            st.experimental_rerun()
+            st.rerun()
         st.markdown("---")
-        st.caption("라임색 없이, 코랄/라일락/청록 톤으로 꾸며드렸어요.")
+        st.caption("코랄/라일락/청록 톤으로 꾸몄어요. 라임색은 사용하지 않았습니다.")
 
     tab_write, tab_list, tab_stats, tab_backup = st.tabs(["작성하기", "목록/검색", "통계", "백업"])
 
@@ -350,7 +342,7 @@ def main_view():
                     for fpath, oname in save_uploaded_audios(aud_files):
                         insert_file(conn, eid, "audio", fpath, oname)
                 st.success("일기가 저장되었습니다!")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.warning("내용 또는 첨부 파일을 추가해 주세요.")
 
@@ -370,55 +362,51 @@ def main_view():
             st.info("일기가 없거나 조건에 맞는 결과가 없어요.")
         else:
             for (id_, d_, mood_, score_, tags_, content_, created_), files_ in items:
-                with st.container():
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.write(f"{d_} · <span class='emotion-badge'>{mood_}</span> · 강도 {score_}/5", unsafe_allow_html=True)
-                    if tags_:
-                        for t in [t.strip() for t in tags_.split(",") if t.strip()]:
-                            st.markdown(f"<span class='chip'>#{t}</span>", unsafe_allow_html=True)
-                    if content_:
-                        st.write(content_)
+                st.markdown('<div class="card">', unsafe_allow_html=True)
+                st.write(f"{d_} · <span class='emotion-badge'>{mood_}</span> · 강도 {score_}/5", unsafe_allow_html=True)
+                if tags_:
+                    for t in [t.strip() for t in tags_.split(",") if t.strip()]:
+                        st.markdown(f"<span class='chip'>#{t}</span>", unsafe_allow_html=True)
+                if content_:
+                    st.write(content_)
 
-                    # 썸네일/오디오
-                    img_cols = st.columns(3)
-                    img_i = 0
-                    for kind, path, oname in files_:
-                        if kind == "image":
-                            if img_i < 3:
-                                with img_cols[img_i % 3]:
-                                    st.image(path, use_column_width=True)
-                                img_i += 1
-                        elif kind == "audio":
-                            st.audio(path)
+                img_cols = st.columns(3)
+                img_i = 0
+                for kind, path, oname in files_:
+                    if kind == "image":
+                        if img_i < 3:
+                            with img_cols[img_i % 3]:
+                                st.image(path, use_column_width=True)
+                            img_i += 1
+                    elif kind == "audio":
+                        st.audio(path)
 
-                    # 수정/삭제
-                    e1, e2 = st.columns([1,1])
-                    if e1.button("수정", key=f"edit_{id_}"):
-                        st.session_state[f"editing_{id_}"] = True
-                    if e2.button("삭제", key=f"del_{id_}"):
-                        # 파일 먼저 정리 후 엔트리 삭제
-                        delete_files_of_entry(conn, id_, user["id"])
-                        delete_entry(conn, id_, user["id"])
-                        st.success("삭제되었습니다.")
-                        st.experimental_rerun()
+                e1, e2 = st.columns([1,1])
+                if e1.button("수정", key=f"edit_{id_}"):
+                    st.session_state[f"editing_{id_}"] = True
+                if e2.button("삭제", key=f"del_{id_}"):
+                    delete_files_of_entry(conn, id_, user["id"])
+                    delete_entry(conn, id_, user["id"])
+                    st.success("삭제되었습니다.")
+                    st.rerun()
 
-                    if st.session_state.get(f"editing_{id_}", False):
-                        st.info("아래에서 내용을 수정하세요.")
-                        ed_d = st.date_input("날짜", value=date.fromisoformat(d_), key=f"ed_d_{id_}")
-                        ed_m = st.selectbox("감정", ["EMOJI_14 행복","EMOJI_15 평온","EMOJI_16 보통","EMOJI_17 우울","EMOJI_18 불안","EMOJI_19 의욕"], index=0, key=f"ed_m_{id_}")
-                        ed_s = st.slider("감정 강도", 1, 5, score_, key=f"ed_s_{id_}")
-                        ed_t = st.text_input("태그", value=tags_ or "", key=f"ed_t_{id_}")
-                        ed_c = st.text_area("내용", value=content_ or "", key=f"ed_c_{id_}")
-                        s1, s2 = st.columns(2)
-                        if s1.button("저장", key=f"save_{id_}"):
-                            update_entry(conn, id_, user["id"], ed_d.isoformat(), ed_m, ed_s, ed_t, ed_c)
-                            st.session_state[f"editing_{id_}"] = False
-                            st.success("수정되었습니다.")
-                            st.experimental_rerun()
-                        if s2.button("취소", key=f"cancel_{id_}"):
-                            st.session_state[f"editing_{id_}"] = False
-                            st.info("취소했습니다.")
-                    st.markdown('</div>', unsafe_allow_html=True)
+                if st.session_state.get(f"editing_{id_}", False):
+                    st.info("아래에서 내용을 수정하세요.")
+                    ed_d = st.date_input("날짜", value=date.fromisoformat(d_), key=f"ed_d_{id_}")
+                    ed_m = st.selectbox("감정", ["EMOJI_14 행복","EMOJI_15 평온","EMOJI_16 보통","EMOJI_17 우울","EMOJI_18 불안","EMOJI_19 의욕"], index=0, key=f"ed_m_{id_}")
+                    ed_s = st.slider("감정 강도", 1, 5, score_, key=f"ed_s_{id_}")
+                    ed_t = st.text_input("태그", value=tags_ or "", key=f"ed_t_{id_}")
+                    ed_c = st.text_area("내용", value=content_ or "", key=f"ed_c_{id_}")
+                    s1, s2 = st.columns(2)
+                    if s1.button("저장", key=f"save_{id_}"):
+                        update_entry(conn, id_, user["id"], ed_d.isoformat(), ed_m, ed_s, ed_t, ed_c)
+                        st.session_state[f"editing_{id_}"] = False
+                        st.success("수정되었습니다.")
+                        st.rerun()
+                    if s2.button("취소", key=f"cancel_{id_}"):
+                        st.session_state[f"editing_{id_}"] = False
+                        st.info("취소했습니다.")
+                st.markdown('</div>', unsafe_allow_html=True)
 
     # 통계
     with tab_stats:
@@ -436,7 +424,6 @@ def main_view():
             )
             st.altair_chart(chart, use_container_width=True)
 
-            # 주/월 트렌드(간단)
             df["d"] = pd.to_datetime(df["d"])
             by_month = df.groupby(df["d"].dt.to_period("M")).size().reset_index(name="count")
             by_month["월"] = by_month["d"].astype(str)
@@ -449,11 +436,14 @@ def main_view():
     # 백업
     with tab_backup:
         st.subheader("백업")
-        st.caption("데이터베이스 파일과 첨부 폴더는 로컬에 저장됩니다. 아래 버튼으로 DB를 내려받을 수 있어요.")
-        with open(DB_PATH, "rb") as f:
-            st.download_button("DB 백업 다운로드(diay.db)", data=f, file_name="diary_backup.db", mime="application/octet-stream")
+        st.caption("데이터베이스 파일은 로컬에 저장됩니다. 아래 버튼으로 DB를 내려받을 수 있어요.")
+        if os.path.exists(DB_PATH):
+            with open(DB_PATH, "rb") as f:
+                st.download_button("DB 백업 다운로드(diary_backup.db)", data=f, file_name="diary_backup.db", mime="application/octet-stream")
+        else:
+            st.info("DB 파일이 아직 생성되지 않았습니다. 먼저 일기를 한 번 저장해 보세요.")
 
-# ====== 라우팅 ======
+# ===== 라우팅 =====
 if not st.session_state.authed or not st.session_state.user:
     auth_view()
 else:
