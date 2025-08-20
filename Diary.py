@@ -336,7 +336,7 @@ def main_view():
             st.session_state.authed = False
             st.rerun()
         st.markdown("---")
-        st.caption("코랄/라일락/청록 톤으로 꾸몄습니다. 라임색은 제외했어요.")
+        st.caption("오늘 하루도 아름답게!")
 
     tab_write, tab_list, tab_stats, tab_backup = st.tabs(["작성하기", "목록/검색", "통계", "백업"])
 
