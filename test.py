@@ -136,7 +136,6 @@ def init_state():
     if "pomo_remaining" not in st.session_state:
         st.session_state.pomo_remaining = st.session_state.pomo_focus * 60
     if "leaderboard_dummy" not in st.session_state:
-        # 로컬 더미 사용자들
         st.session_state.leaderboard_dummy = [
             {"user":"토끼","total_min":720,"subject":"수학","streak":4},
             {"user":"별빛","total_min":640,"subject":"영어","streak":6},
@@ -174,26 +173,21 @@ def build_daily_stats(df_sessions, daily_goal_min=None):
 def calc_streak(daily_df):
     if daily_df.empty:
         return 0
-    # 날짜 연속성 기반 스트릭 계산(최근부터 역순)
-    d = daily_df.copy().sort_values("date", ascending=False)
     today = date.today()
+    # 목표 달성일만 모아 연속 체크
+    achieved = {d for d, ok in zip(daily_df["date"], daily_df["goal_met"]) if ok}
     streak = 0
-    expected = today
-    date_set = {row for row in d["date"].tolist()}
-    while expected in date_set:
-        row = d[d["date"] == expected]
-        if not row.empty and bool(row["goal_met"].iloc[0]):
-            streak += 1
-            expected = expected - timedelta(days=1)
-        else:
-            break
+    cur = today
+    while cur in achieved:
+        streak += 1
+        cur = cur - timedelta(days=1)
     return streak
 
 def color_bucket(mins):
     bins = [0, 30, 60, 120, 180, 240, 99999]
     idx = np.digitize([mins], bins)[0]  # 1~6
     palette = {
-        1: "#F8E7F1",  # 매우 옅은 핑크
+        1: "#F8E7F1",
         2: "#FBD1E6",
         3: "#F8A8CF",
         4: "#F17CB4",
@@ -203,7 +197,7 @@ def color_bucket(mins):
     return palette.get(idx, "#F8E7F1")
 
 def ensure_coin_reward(duration_min):
-    # 1분 = 1코인 + 목표 달성 보너스(세션 종료 시점에 일일 합계 기준)
+    # 1분 = 1코인
     st.session_state.coins += duration_min
 
 def update_theme_by_equipped():
@@ -269,10 +263,9 @@ with right:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("오늘 학습", f"{today_total}분")
         c2.metric("일일 목표", f"{st.session_state.daily_goal_min}분")
-        st.metric(label="보유 코인", value=f"{st.session_state.coins}💰")
-        # 스트릭
-        daily_df = build_daily_stats(df_all)
-        streak_val = calc_streak(daily_df)
+        c3.metric("보유 코인", f"{st.session_state.coins}💰")
+        daily_df_header = build_daily_stats(df_all)
+        streak_val = calc_streak(daily_df_header)
         c4.metric("연속 달성", f"{streak_val}일 🔥")
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -291,23 +284,28 @@ with tab_timer:
     colA, colB = st.columns([2, 1])
 
     with colA:
-        st.session_state.selected_subject = st.selectbox("과목을 선택하세요", options=st.session_state.subjects, index=st.session_state.subjects.index(st.session_state.selected_subject) if st.session_state.selected_subject in st.session_state.subjects else 0)
-        note = st.text_input("세션 메모(선택)")
+        st.session_state.selected_subject = st.selectbox(
+            "과목을 선택하세요",
+            options=st.session_state.subjects,
+            index=st.session_state.subjects.index(st.session_state.selected_subject) if st.session_state.selected_subject in st.session_state.subjects else 0,
+            key="subject_select"
+        )
+        note = st.text_input("세션 메모(선택)", key="note_input")
         st.toggle("포모도로 모드", key="pomo_mode")
         if st.session_state.pomo_mode:
             col_pf, col_pb = st.columns(2)
-            st.number_input("집중(분)", min_value=5, max_value=120, value=st.session_state.pomo_focus, step=5, key="pomo_focus")
-            st.number_input("휴식(분)", min_value=3, max_value=60, value=st.session_state.pomo_break, step=1, key="pomo_break")
-            if st.button("사이클 초기화"):
+            col_pf.number_input("집중(분)", min_value=5, max_value=120, value=st.session_state.pomo_focus, step=5, key="pomo_focus")
+            col_pb.number_input("휴식(분)", min_value=3, max_value=60, value=st.session_state.pomo_break, step=1, key="pomo_break")
+            if st.button("사이클 초기화", key="pomo_reset"):
                 st.session_state.pomo_is_break = False
                 st.session_state.pomo_remaining = st.session_state.pomo_focus * 60
                 st.success("포모도로 타이머가 초기화되었어요.")
         timer_placeholder = st.empty()
 
         c1, c2, c3 = st.columns(3)
-        start_btn = c1.button("시작 ▶")
-        pause_btn = c2.button("일시정지 ⏸️")
-        stop_btn  = c3.button("종료 ⏹️")
+        start_btn = c1.button("시작 ▶", key="timer_start")
+        pause_btn = c2.button("일시정지 ⏸️", key="timer_pause")
+        stop_btn  = c3.button("종료 ⏹️", key="timer_stop")
 
         # 타이머 로직
         if start_btn and not st.session_state.running:
@@ -325,8 +323,7 @@ with tab_timer:
                 end_time = time.time() if st.session_state.running else (st.session_state.start_time + st.session_state.elapsed_sec)
                 duration_sec = int(end_time - st.session_state.start_time)
                 duration_min = max(1, duration_sec // 60)
-                coins = duration_min  # 기본 규칙
-                # 세션 저장
+                coins = duration_min
                 st.session_state.sessions.append({
                     "subject": st.session_state.selected_subject,
                     "start": datetime.fromtimestamp(st.session_state.start_time).isoformat(timespec="seconds"),
@@ -337,18 +334,16 @@ with tab_timer:
                 })
                 ensure_coin_reward(duration_min)
 
-                # 목표 달성 보너스(세션 저장 후 오늘 합계 검사)
+                # 목표 달성 보너스(하루 1회)
                 df_tmp = get_sessions_df()
                 tdf = df_tmp[pd.to_datetime(df_tmp["start"]).dt.date == date.today()]
                 if int(tdf["duration_min"].sum()) >= st.session_state.daily_goal_min:
-                    # 하루 한번만 보너스 주도록 플래그
                     if "daily_bonus_date" not in st.session_state or st.session_state.daily_bonus_date != date.today():
                         st.session_state.coins += 50
                         st.session_state.daily_bonus_date = date.today()
                         st.balloons()
                         st.success("오늘 목표 달성! 보너스 50코인 지급 🎊")
 
-            # 리셋
             st.session_state.running = False
             st.session_state.start_time = None
             st.session_state.elapsed_sec = 0
@@ -356,21 +351,15 @@ with tab_timer:
         # 표시/갱신
         if st.session_state.running:
             if st.session_state.pomo_mode:
-                # 포모도로: 남은 시간 카운트다운
                 elapsed_now = int(time.time() - st.session_state.start_time)
-                # 일반 경과도 업데이트
-                display_sec = elapsed_now
-                # 남은 시간 처리
                 if "last_tick" not in st.session_state:
                     st.session_state.last_tick = time.time()
-                # 틱 처리
                 now = time.time()
                 delta = now - st.session_state.last_tick
                 if delta >= 1:
                     dec = int(delta)
                     st.session_state.pomo_remaining = max(0, st.session_state.pomo_remaining - dec)
                     st.session_state.last_tick = now
-                # 사이클 전환
                 if st.session_state.pomo_remaining == 0:
                     st.session_state.pomo_is_break = not st.session_state.pomo_is_break
                     if st.session_state.pomo_is_break:
@@ -389,7 +378,6 @@ with tab_timer:
         else:
             timer_placeholder.markdown(f"#### ⌛ {format_hms(st.session_state.elapsed_sec)}")
 
-        # 기록/통계
         st.markdown("#### 최근 기록")
         df_view = get_sessions_df()
         if df_view.empty:
@@ -419,29 +407,23 @@ with tab_calendar:
     df_all = get_sessions_df()
     daily_df = build_daily_stats(df_all)
 
-    # 월 선택
     today = date.today()
-    sel_month = st.date_input("월을 선택하세요", value=date(today.year, today.month, 1))
+    sel_month = st.date_input("월을 선택하세요", value=date(today.year, today.month, 1), key="month_picker")
     month_start = date(sel_month.year, sel_month.month, 1)
     next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
     month_end = next_month - timedelta(days=1)
 
-    # 해당 월 데이터
+    # 해당 월 날짜 목록
     days = []
     d = month_start
     while d <= month_end:
         days.append(d)
         d += timedelta(days=1)
 
-    # 요일 헤더
     st.write("일  월  화  수  목  금  토")
-    # 앞쪽 공백(해당 월 시작 요일만큼)
     first_wday = month_start.weekday()  # 월=0 ... 일=6
-    # 우리 UI는 일요일부터라서 보정
-    # Python weekday(월0) -> (일0)로 맞춤
-    start_shift = (first_wday + 1) % 7
+    start_shift = (first_wday + 1) % 7  # 일요일=0 기준
 
-    # 그리드 출력
     grid = []
     week = [None]*start_shift
     for dt_ in days:
@@ -454,8 +436,7 @@ with tab_calendar:
             week.append(None)
         grid.append(week)
 
-    # 렌더
-    for wk in grid:
+    for wk_i, wk in enumerate(grid):
         c = st.columns(7)
         for i, d_ in enumerate(wk):
             with c[i]:
@@ -473,8 +454,7 @@ with tab_calendar:
                     )
     st.markdown("---")
 
-    # 날짜 상세
-    sel_date = st.date_input("날짜 상세 보기", value=today)
+    sel_date = st.date_input("날짜 상세 보기", value=today, key="day_picker")
     if not df_all.empty:
         day_df = df_all[pd.to_datetime(df_all["start"]).dt.date == sel_date]
         if day_df.empty:
@@ -496,24 +476,20 @@ with tab_rank:
     my_total = int(my_week_df["duration_min"].sum()) if not my_week_df.empty else 0
     my_streak = calc_streak(build_daily_stats(df_all))
 
-    # 더미와 합쳐 순위 구성
     lb = st.session_state.leaderboard_dummy.copy()
     lb.append({"user": st.session_state.nickname, "total_min": my_total, "subject":"종합", "streak": my_streak})
     ldf = pd.DataFrame(lb)
     ldf = ldf.sort_values(["total_min","streak"], ascending=[False, False]).reset_index(drop=True)
     ldf["rank"] = ldf.index + 1
 
-    # 상단 내 정보
     me = ldf[ldf["user"] == st.session_state.nickname].iloc[0]
     st.markdown(f'<div class="rank-highlight">🏆 내 순위: {int(me["rank"])}위 | 이번 주: {int(me["total_min"])}분 | 스트릭: {int(me["streak"])}일</div>', unsafe_allow_html=True)
 
-    # 전체 랭킹 표와 그래프
     st.markdown("#### 전체 순위")
     st.dataframe(ldf[["rank","user","total_min","streak"]], use_container_width=True, height=280)
     st.markdown("#### 시각화(분)")
     st.bar_chart(ldf.set_index("user")["total_min"])
 
-    # 과목별(내 기록 기준)
     st.markdown("#### 과목별 내 주간 기록")
     if my_week_df.empty:
         st.info("이번 주 기록이 아직 없어요. 지금 바로 시작해볼까요?")
@@ -538,8 +514,11 @@ with tab_shop:
         st.write(f"적용 중 | 테마: {eq_theme}, 배지: {eq_badge}, 사운드: {eq_sound}, 이모지: {eq_emoji}")
 
     tabs_shop = st.tabs(["추천", "테마", "배지", "사운드", "이모지"])
-    def render_items(filter_type=None):
-        items = st.session_state.shop_items if filter_type is None else [i for i in st.session_state.shop_items if i["type"] == filter_type]
+
+    def render_items(filter_type=None, scope="all"):
+        items = st.session_state.shop_items if filter_type is None else [
+            i for i in st.session_state.shop_items if i["type"] == filter_type
+        ]
         cols = st.columns(3)
         for idx, it in enumerate(items):
             with cols[idx % 3]:
@@ -547,29 +526,41 @@ with tab_shop:
                 st.write(f"이름: {it['name']}")
                 st.write(f"가격: {it['price']} 코인")
                 owned = it["id"] in st.session_state.inventory
+
                 if it["type"] == "theme":
                     preview_primary = it["payload"].get("primary", THEME_COLORS["primary"])
                     preview_bg = it["payload"].get("bg", THEME_COLORS["bg_light"])
-                    st.markdown(f'<div style="height:40px; border-radius:8px; background: linear-gradient(90deg, {preview_bg}, {preview_primary}); border:1px solid #FFD5EF;"></div>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div style="height:40px; border-radius:8px; background: linear-gradient(90deg, {preview_bg}, {preview_primary}); border:1px solid #FFD5EF;"></div>',
+                        unsafe_allow_html=True
+                    )
+
                 if owned:
                     st.success("보유 중")
-                    if st.button(f"적용하기 - {it['id']}"):
+                    if st.button(
+                        f"적용하기 - {it['id']}",
+                        key=f"equip_{scope}_{it['id']}"
+                    ):
                         equip_item(it["id"])
                 else:
-                    if st.button(f"구매하기 - {it['id']}"):
+                    if st.button(
+                        f"구매하기 - {it['id']}",
+                        key=f"buy_{scope}_{it['id']}"
+                    ):
                         buy_item(it["id"])
+
                 st.markdown('</div>', unsafe_allow_html=True)
 
     with tabs_shop[0]:
-        render_items()
+        render_items(scope="all")
     with tabs_shop[1]:
-        render_items("theme")
+        render_items("theme", scope="theme")
     with tabs_shop[2]:
-        render_items("badge")
+        render_items("badge", scope="badge")
     with tabs_shop[3]:
-        render_items("sound")
+        render_items("sound", scope="sound")
     with tabs_shop[4]:
-        render_items("emoji")
+        render_items("emoji", scope="emoji")
 
 # =========================
 # 설정 탭
@@ -583,7 +574,7 @@ with tab_settings:
     with col_add1:
         new_subject = st.text_input("새 과목 이름", key="new_subject")
     with col_add2:
-        if st.button("과목 추가"):
+        if st.button("과목 추가", key="btn_add_subject"):
             ns = st.session_state.get("new_subject","").strip()
             if ns and ns not in st.session_state.subjects:
                 st.session_state.subjects.append(ns)
@@ -591,28 +582,25 @@ with tab_settings:
             else:
                 st.warning("유효하지 않거나 이미 존재하는 과목입니다.")
 
-    # 데이터 내보내기/불러오기
     st.markdown("---")
     st.markdown("#### 데이터 관리")
     col_exp, col_imp = st.columns(2)
     with col_exp:
-        if st.button("세션 CSV로 내보내기"):
+        if st.button("세션 CSV로 내보내기", key="export_csv"):
             df = get_sessions_df()
             if df.empty:
                 st.info("내보낼 세션 데이터가 없어요.")
             else:
                 csv = df.to_csv(index=False).encode("utf-8-sig")
-                st.download_button("CSV 다운로드", data=csv, file_name="study_sessions.csv", mime="text/csv")
+                st.download_button("CSV 다운로드", data=csv, file_name="study_sessions.csv", mime="text/csv", key="download_csv_btn")
     with col_imp:
-        up = st.file_uploader("세션 CSV 불러오기", type=["csv"])
+        up = st.file_uploader("세션 CSV 불러오기", type=["csv"], key="uploader_csv")
         if up is not None:
             df_new = pd.read_csv(up)
             required_cols = {"subject","start","end","duration_min","note","coins"}
             if required_cols.issubset(set(df_new.columns)):
-                # 기존 데이터 보존 + 합치기
                 old = get_sessions_df()
                 merged = pd.concat([old, df_new], ignore_index=True)
-                # 메모리 상태 갱신
                 st.session_state.sessions = merged.to_dict(orient="records")
                 st.success("불러오기가 완료되었어요.")
             else:
