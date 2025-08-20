@@ -3,7 +3,6 @@ import time
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, date
-from streamlit_autorefresh import st_autorefresh
 
 # =========================
 # 기본 설정
@@ -146,6 +145,8 @@ def init_state():
         ]
     if "daily_bonus_date" not in st.session_state:
         st.session_state.daily_bonus_date = None
+    if "__last_tick__" not in st.session_state:
+        st.session_state["__last_tick__"] = time.time()
 
 init_state()
 
@@ -249,6 +250,18 @@ def filter_week(df, start, end):
     df2["d"] = pd.to_datetime(df2["start"]).dt.date
     return df2[(df2["d"] >= start) & (df2["d"] <= end)]
 
+# 외부 패키지 없이 가벼운 자동 리렌더링 유도
+def safe_autorefresh(interval_ms=1000, key="__tick__"):
+    if not st.session_state.get("running", False):
+        return
+    now = time.time()
+    if now - st.session_state["__last_tick__"] >= interval_ms / 1000.0:
+        st.session_state["__last_tick__"] = now
+        # 쿼리 파라미터를 토글해 rerun 유도
+        qp = st.query_params
+        cur = int(qp.get(key, ["0"])[0]) if key in qp else 0
+        st.query_params[key] = str((cur + 1) % 1000000)
+
 # =========================
 # 상단 헤더
 # =========================
@@ -284,9 +297,8 @@ tab_timer, tab_calendar, tab_rank, tab_shop, tab_settings = st.tabs(["타이머"
 # 타이머 탭
 # =========================
 with tab_timer:
-    # 실행 중일 때 1초마다 자동 리렌더링
-    if st.session_state.get("running", False):
-        st_autorefresh(interval=1000, key="timer_autorefresh")
+    # 실행 중일 때 1초마다 자동 리렌더링 유도
+    safe_autorefresh(interval_ms=1000, key="timer_tick")
 
     st.markdown("### 타이머")
     colA, colB = st.columns([2, 1])
@@ -322,7 +334,7 @@ with tab_timer:
             # 시작 시각 설정
             if st.session_state.start_time is None:
                 st.session_state.start_time = time.time() - st.session_state.elapsed_sec
-            # 포모도로 모드: 종료 예정 시각 설정(절대시간 기반)
+            # 포모도로 모드: 종료 예정 시각(절대시간) 설정
             if st.session_state.pomo_mode and st.session_state.pomo_end_at is None:
                 base = st.session_state.pomo_focus if not st.session_state.pomo_is_break else st.session_state.pomo_break
                 st.session_state.pomo_end_at = time.time() + base * 60
@@ -400,7 +412,7 @@ with tab_timer:
         if df_view.empty:
             st.info("아직 기록이 없어요. 타이머를 시작해보세요!")
         else:
-            st.dataframe(df_view.sort_values("start", ascending=False), use_container_width=True, height=280)
+            st.dataframe(df_view.sort_values("start", descending=True), use_container_width=True, height=280)
 
     with colB:
         st.markdown("#### 빠른 정보")
