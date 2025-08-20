@@ -78,6 +78,9 @@ def inject_theme(theme=None):
         align-items: center; justify-content: center;
         font-weight: 600;
     }}
+    .nav-right {{
+        display: flex; gap: 8px; justify-content: flex-end; align-items: center;
+    }}
     .rank-highlight {{
         background: #FFF4FE;
         border: 2px solid #FFD5EF;
@@ -137,16 +140,18 @@ def init_state():
         st.session_state.pomo_remaining = st.session_state.pomo_focus * 60
     if "pomo_end_at" not in st.session_state:
         st.session_state.pomo_end_at = None
-    if "leaderboard_dummy" not in st.session_state:
-        st.session_state.leaderboard_dummy = [
-            {"user":"토끼","total_min":720,"subject":"수학","streak":4},
-            {"user":"별빛","total_min":640,"subject":"영어","streak":6},
-            {"user":"파도","total_min":510,"subject":"국어","streak":2},
-        ]
     if "daily_bonus_date" not in st.session_state:
         st.session_state.daily_bonus_date = None
     if "__last_tick__" not in st.session_state:
         st.session_state["__last_tick__"] = time.time()
+    # 참여방 상태
+    if "rooms" not in st.session_state:
+        # 로컬 메모리 상의 방 목록(간단 더미 예시 포함)
+        st.session_state.rooms = {
+            "공부방-1": {"title":"공부방-1", "desc":"매일 3시간 이상 집중!", "members":["토끼","별빛"], "notices":[]}
+        }
+    if "current_room" not in st.session_state:
+        st.session_state.current_room = None
 
 init_state()
 
@@ -263,12 +268,12 @@ def safe_autorefresh(interval_ms=1000, key="__tick__"):
         st.query_params[key] = str((cur + 1) % 1000000)
 
 # =========================
-# 상단 헤더
+# 상단 헤더(참여방 바로가기 버튼 포함)
 # =========================
 left, right = st.columns([1, 2])
 with left:
     st.markdown(f"## ⏱️ 공부 관리 사이트")
-    st.caption("밝고 귀엽고 화려한 공부 타이머, 캘린더, 랭킹, 코인 상점")
+    st.caption("밝고 귀엽고 화려한 공부 타이머, 캘린더, 참여방, 코인 상점")
 with right:
     with st.container():
         df_all = get_sessions_df()
@@ -277,21 +282,29 @@ with right:
             tdf = df_all[pd.to_datetime(df_all["start"]).dt.date == date.today()]
             today_total = int(tdf["duration_min"].sum())
         st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns([1,1,1,1,1])
         c1.metric("오늘 학습", f"{today_total}분")
         c2.metric("일일 목표", f"{st.session_state.daily_goal_min}분")
         c3.metric("보유 코인", f"{st.session_state.coins}💰")
         daily_df_header = build_daily_stats(df_all)
         streak_val = calc_streak(daily_df_header)
         c4.metric("연속 달성", f"{streak_val}일 🔥")
+        # 참여방 상단바 버튼
+        go_room = c5.button("참여방 바로가기", key="goto_room_top")
         st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
 
 # =========================
-# 탭: 타이머 | 캘린더 | 랭킹 | 상점 | 설정
+# 탭: 타이머 | 캘린더 | 참여방 | 상점 | 설정
 # =========================
-tab_timer, tab_calendar, tab_rank, tab_shop, tab_settings = st.tabs(["타이머", "캘린더", "랭킹", "상점", "설정"])
+if go_room:
+    # 상단 버튼을 누르면 기본 탭 선택 힌트를 위해 쿼리값만 살짝 변경(단순 UX 트릭)
+    qp = st.query_params
+    qp["tab"] = "room"
+    st.query_params = qp
+
+tab_timer, tab_calendar, tab_room, tab_shop, tab_settings = st.tabs(["타이머", "캘린더", "참여방", "상점", "설정"])
 
 # =========================
 # 타이머 탭
@@ -331,10 +344,8 @@ with tab_timer:
         # 타이머 로직
         if start_btn and not st.session_state.running:
             st.session_state.running = True
-            # 시작 시각 설정
             if st.session_state.start_time is None:
                 st.session_state.start_time = time.time() - st.session_state.elapsed_sec
-            # 포모도로 모드: 종료 예정 시각(절대시간) 설정
             if st.session_state.pomo_mode and st.session_state.pomo_end_at is None:
                 base = st.session_state.pomo_focus if not st.session_state.pomo_is_break else st.session_state.pomo_break
                 st.session_state.pomo_end_at = time.time() + base * 60
@@ -375,13 +386,11 @@ with tab_timer:
             st.session_state.running = False
             st.session_state.start_time = None
             st.session_state.elapsed_sec = 0
-            # 포모도로 상태 유지/리셋
             st.session_state.pomo_end_at = None
 
         # 표시/갱신
         if st.session_state.running:
             if st.session_state.pomo_mode:
-                # 절대 종료시각 기반 남은 시간 계산
                 if st.session_state.pomo_end_at is None:
                     base = st.session_state.pomo_focus if not st.session_state.pomo_is_break else st.session_state.pomo_break
                     st.session_state.pomo_end_at = time.time() + base * 60
@@ -389,7 +398,6 @@ with tab_timer:
                 remaining = max(0, int(st.session_state.pomo_end_at - time.time()))
                 st.session_state.pomo_remaining = remaining
                 if remaining == 0:
-                    # 사이클 전환
                     st.session_state.pomo_is_break = not st.session_state.pomo_is_break
                     base = st.session_state.pomo_break if st.session_state.pomo_is_break else st.session_state.pomo_focus
                     st.session_state.pomo_end_at = time.time() + base * 60
@@ -401,7 +409,6 @@ with tab_timer:
                 timer_text = f"{'휴식' if st.session_state.pomo_is_break else '집중'} {format_hms(st.session_state.pomo_remaining)}"
                 timer_placeholder.markdown(f"#### ⌛ {timer_text}")
             else:
-                # 일반 타이머: 경과 시간 표시(매초 자동 리렌더링으로 갱신)
                 elapsed = int(time.time() - st.session_state.start_time)
                 timer_placeholder.markdown(f"#### ⌛ {format_hms(elapsed)}")
         else:
@@ -412,7 +419,7 @@ with tab_timer:
         if df_view.empty:
             st.info("아직 기록이 없어요. 타이머를 시작해보세요!")
         else:
-            st.dataframe(df_view.sort_values("start", descending=True), use_container_width=True, height=280)
+            st.dataframe(df_view.sort_values("start", ascending=False), use_container_width=True, height=280)
 
     with colB:
         st.markdown("#### 빠른 정보")
@@ -495,36 +502,94 @@ with tab_calendar:
             st.bar_chart(pie.set_index("subject"))
 
 # =========================
-# 랭킹 탭
+# 참여방 탭
 # =========================
-with tab_rank:
-    st.markdown("### 랭킹(주간)")
-    df_all = get_sessions_df()
-    week_start, week_end = current_week_range()
-    my_week_df = filter_week(df_all, week_start, week_end)
-    my_total = int(my_week_df["duration_min"].sum()) if not my_week_df.empty else 0
-    my_streak = calc_streak(build_daily_stats(df_all))
+with tab_room:
+    st.markdown("### 참여방")
+    # 방 리스트
+    cols = st.columns([2, 1])
+    with cols[0]:
+        st.markdown("#### 방 목록")
+        if st.session_state.rooms:
+            data = []
+            for rid, r in st.session_state.rooms.items():
+                data.append({"방 이름": r["title"], "설명": r.get("desc",""), "인원": len(r.get("members",[]))})
+            st.dataframe(pd.DataFrame(data), use_container_width=True, height=240)
+        else:
+            st.info("아직 방이 없어요. 새로 만들어보세요!")
 
-    lb = st.session_state.leaderboard_dummy.copy()
-    lb.append({"user": st.session_state.nickname, "total_min": my_total, "subject":"종합", "streak": my_streak})
-    ldf = pd.DataFrame(lb)
-    ldf = ldf.sort_values(["total_min","streak"], ascending=[False, False]).reset_index(drop=True)
-    ldf["rank"] = ldf.index + 1
+    with cols[1]:
+        st.markdown("#### 방 생성/참여")
+        new_title = st.text_input("새 방 이름", key="room_new_title")
+        new_desc = st.text_input("설명(선택)", key="room_new_desc")
+        if st.button("방 만들기", key="btn_make_room"):
+            title = new_title.strip()
+            if not title:
+                st.warning("방 이름을 입력해 주세요.")
+            elif title in st.session_state.rooms:
+                st.warning("이미 존재하는 방 이름입니다.")
+            else:
+                st.session_state.rooms[title] = {"title": title, "desc": new_desc, "members": [], "notices":[]}
+                st.success(f"'{title}' 방이 생성되었어요!")
 
-    me = ldf[ldf["user"] == st.session_state.nickname].iloc[0]
-    st.markdown(f'<div class="rank-highlight">🏆 내 순위: {int(me["rank"])}위 | 이번 주: {int(me["total_min"])}분 | 스트릭: {int(me["streak"])}일</div>', unsafe_allow_html=True)
+        join_title = st.text_input("참여할 방 이름", key="room_join_title")
+        if st.button("참여하기", key="btn_join_room"):
+            title = join_title.strip()
+            if title in st.session_state.rooms:
+                st.session_state.current_room = title
+                # 멤버 등록(중복 방지)
+                room = st.session_state.rooms[title]
+                if st.session_state.nickname not in room["members"]:
+                    room["members"].append(st.session_state.nickname)
+                st.success(f"'{title}' 방에 참여했어요!")
+            else:
+                st.error("해당 방이 존재하지 않아요.")
 
-    st.markdown("#### 전체 순위")
-    st.dataframe(ldf[["rank","user","total_min","streak"]], use_container_width=True, height=280)
-    st.markdown("#### 시각화(분)")
-    st.bar_chart(ldf.set_index("user")["total_min"])
+    st.markdown("---")
 
-    st.markdown("#### 과목별 내 주간 기록")
-    if my_week_df.empty:
-        st.info("이번 주 기록이 아직 없어요. 지금 바로 시작해볼까요?")
+    # 현재 참여 중인 방
+    cur = st.session_state.current_room
+    if cur and cur in st.session_state.rooms:
+        room = st.session_state.rooms[cur]
+        st.markdown(f"#### 현재 방: {room['title']}")
+        st.write(f"설명: {room.get('desc','')}")
+        c1, c2 = st.columns([2,1])
+        with c1:
+            st.markdown("##### 공지/메시지")
+            new_notice = st.text_input("메시지 입력", key="room_notice_input")
+            if st.button("메시지 올리기", key="btn_push_notice"):
+                txt = new_notice.strip()
+                if txt:
+                    room["notices"].append({"user": st.session_state.nickname, "text": txt, "at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
+                    st.success("메시지를 올렸어요!")
+                else:
+                    st.warning("메시지를 입력해 주세요.")
+            # 공지 목록
+            if room["notices"]:
+                ndf = pd.DataFrame(room["notices"])
+                ndf = ndf[["at","user","text"]].iloc[::-1]  # 최신순
+                st.dataframe(ndf, use_container_width=True, height=240)
+            else:
+                st.info("아직 공지나 메시지가 없어요.")
+        with c2:
+            st.markdown("##### 현재 멤버")
+            members = room.get("members", [])
+            # 더미 멤버 보강(보이는 재미용)
+            demo = [m for m in members]
+            if "토끼" not in demo:
+                demo.append("토끼")
+            if "별빛" not in demo:
+                demo.append("별빛")
+            st.table(pd.DataFrame({"닉네임": demo}))
+
+        # 방 나가기
+        if st.button("방 나가기", key="btn_leave_room"):
+            if st.session_state.nickname in room["members"]:
+                room["members"].remove(st.session_state.nickname)
+            st.session_state.current_room = None
+            st.success("방에서 나왔어요.")
     else:
-        sb = my_week_df.groupby("subject")["duration_min"].sum().sort_values(ascending=False)
-        st.bar_chart(sb)
+        st.info("참여 중인 방이 없습니다. 방에 참여하거나 새로 만들어 보세요.")
 
 # =========================
 # 상점 탭
