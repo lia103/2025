@@ -3,6 +3,7 @@ import time
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, date
+from streamlit_autorefresh import st_autorefresh
 
 # =========================
 # 기본 설정
@@ -135,12 +136,16 @@ def init_state():
         st.session_state.pomo_is_break = False
     if "pomo_remaining" not in st.session_state:
         st.session_state.pomo_remaining = st.session_state.pomo_focus * 60
+    if "pomo_end_at" not in st.session_state:
+        st.session_state.pomo_end_at = None
     if "leaderboard_dummy" not in st.session_state:
         st.session_state.leaderboard_dummy = [
             {"user":"토끼","total_min":720,"subject":"수학","streak":4},
             {"user":"별빛","total_min":640,"subject":"영어","streak":6},
             {"user":"파도","total_min":510,"subject":"국어","streak":2},
         ]
+    if "daily_bonus_date" not in st.session_state:
+        st.session_state.daily_bonus_date = None
 
 init_state()
 
@@ -153,6 +158,7 @@ def get_sessions_df():
     return pd.DataFrame(st.session_state.sessions)
 
 def format_hms(sec):
+    sec = max(0, int(sec))
     h = sec // 3600
     m = (sec % 3600) // 60
     s = sec % 60
@@ -174,7 +180,6 @@ def calc_streak(daily_df):
     if daily_df.empty:
         return 0
     today = date.today()
-    # 목표 달성일만 모아 연속 체크
     achieved = {d for d, ok in zip(daily_df["date"], daily_df["goal_met"]) if ok}
     streak = 0
     cur = today
@@ -197,7 +202,6 @@ def color_bucket(mins):
     return palette.get(idx, "#F8E7F1")
 
 def ensure_coin_reward(duration_min):
-    # 1분 = 1코인
     st.session_state.coins += duration_min
 
 def update_theme_by_equipped():
@@ -280,6 +284,10 @@ tab_timer, tab_calendar, tab_rank, tab_shop, tab_settings = st.tabs(["타이머"
 # 타이머 탭
 # =========================
 with tab_timer:
+    # 실행 중일 때 1초마다 자동 리렌더링
+    if st.session_state.get("running", False):
+        st_autorefresh(interval=1000, key="timer_autorefresh")
+
     st.markdown("### 타이머")
     colA, colB = st.columns([2, 1])
 
@@ -294,11 +302,12 @@ with tab_timer:
         st.toggle("포모도로 모드", key="pomo_mode")
         if st.session_state.pomo_mode:
             col_pf, col_pb = st.columns(2)
-            col_pf.number_input("집중(분)", min_value=5, max_value=120, value=st.session_state.pomo_focus, step=5, key="pomo_focus")
-            col_pb.number_input("휴식(분)", min_value=3, max_value=60, value=st.session_state.pomo_break, step=1, key="pomo_break")
+            st.session_state.pomo_focus = col_pf.number_input("집중(분)", min_value=5, max_value=120, value=st.session_state.pomo_focus, step=5, key="pomo_focus")
+            st.session_state.pomo_break = col_pb.number_input("휴식(분)", min_value=3, max_value=60, value=st.session_state.pomo_break, step=1, key="pomo_break")
             if st.button("사이클 초기화", key="pomo_reset"):
                 st.session_state.pomo_is_break = False
                 st.session_state.pomo_remaining = st.session_state.pomo_focus * 60
+                st.session_state.pomo_end_at = time.time() + st.session_state.pomo_remaining
                 st.success("포모도로 타이머가 초기화되었어요.")
         timer_placeholder = st.empty()
 
@@ -310,8 +319,14 @@ with tab_timer:
         # 타이머 로직
         if start_btn and not st.session_state.running:
             st.session_state.running = True
+            # 시작 시각 설정
             if st.session_state.start_time is None:
                 st.session_state.start_time = time.time() - st.session_state.elapsed_sec
+            # 포모도로 모드: 종료 예정 시각 설정(절대시간 기반)
+            if st.session_state.pomo_mode and st.session_state.pomo_end_at is None:
+                base = st.session_state.pomo_focus if not st.session_state.pomo_is_break else st.session_state.pomo_break
+                st.session_state.pomo_end_at = time.time() + base * 60
+                st.session_state.pomo_remaining = base * 60
             st.toast("집중 시작! 힘내세요! 💪", icon="✅")
 
         if pause_btn and st.session_state.running:
@@ -338,41 +353,43 @@ with tab_timer:
                 df_tmp = get_sessions_df()
                 tdf = df_tmp[pd.to_datetime(df_tmp["start"]).dt.date == date.today()]
                 if int(tdf["duration_min"].sum()) >= st.session_state.daily_goal_min:
-                    if "daily_bonus_date" not in st.session_state or st.session_state.daily_bonus_date != date.today():
+                    if st.session_state.daily_bonus_date != date.today():
                         st.session_state.coins += 50
                         st.session_state.daily_bonus_date = date.today()
                         st.balloons()
                         st.success("오늘 목표 달성! 보너스 50코인 지급 🎊")
 
+            # 리셋
             st.session_state.running = False
             st.session_state.start_time = None
             st.session_state.elapsed_sec = 0
+            # 포모도로 상태 유지/리셋
+            st.session_state.pomo_end_at = None
 
         # 표시/갱신
         if st.session_state.running:
             if st.session_state.pomo_mode:
-                elapsed_now = int(time.time() - st.session_state.start_time)
-                if "last_tick" not in st.session_state:
-                    st.session_state.last_tick = time.time()
-                now = time.time()
-                delta = now - st.session_state.last_tick
-                if delta >= 1:
-                    dec = int(delta)
-                    st.session_state.pomo_remaining = max(0, st.session_state.pomo_remaining - dec)
-                    st.session_state.last_tick = now
-                if st.session_state.pomo_remaining == 0:
+                # 절대 종료시각 기반 남은 시간 계산
+                if st.session_state.pomo_end_at is None:
+                    base = st.session_state.pomo_focus if not st.session_state.pomo_is_break else st.session_state.pomo_break
+                    st.session_state.pomo_end_at = time.time() + base * 60
+                    st.session_state.pomo_remaining = base * 60
+                remaining = max(0, int(st.session_state.pomo_end_at - time.time()))
+                st.session_state.pomo_remaining = remaining
+                if remaining == 0:
+                    # 사이클 전환
                     st.session_state.pomo_is_break = not st.session_state.pomo_is_break
+                    base = st.session_state.pomo_break if st.session_state.pomo_is_break else st.session_state.pomo_focus
+                    st.session_state.pomo_end_at = time.time() + base * 60
+                    st.session_state.pomo_remaining = base * 60
                     if st.session_state.pomo_is_break:
-                        st.session_state.pomo_remaining = st.session_state.pomo_break * 60
                         st.toast("휴식 시간이에요. 눈과 몸을 풀어주세요. 🌿", icon="💤")
                     else:
-                        st.session_state.pomo_remaining = st.session_state.pomo_focus * 60
                         st.toast("다시 집중 시작! 할 수 있어요! ✨", icon="💪")
                 timer_text = f"{'휴식' if st.session_state.pomo_is_break else '집중'} {format_hms(st.session_state.pomo_remaining)}"
                 timer_placeholder.markdown(f"#### ⌛ {timer_text}")
             else:
-                with st.spinner("타이머 작동 중..."):
-                    time.sleep(1)
+                # 일반 타이머: 경과 시간 표시(매초 자동 리렌더링으로 갱신)
                 elapsed = int(time.time() - st.session_state.start_time)
                 timer_placeholder.markdown(f"#### ⌛ {format_hms(elapsed)}")
         else:
