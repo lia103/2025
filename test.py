@@ -34,7 +34,6 @@ def verify_password(password: str, hashed_hex: str, salt: bytes) -> bool:
     return hmac.compare_digest(dk_check, hashed_hex)
 
 def safe_rerun():
-    # rerun 남발 방지: 버튼/폼 이벤트 뒤에서만 호출되도록 사용
     if hasattr(st, "rerun"):
         st.rerun()
     else:
@@ -44,7 +43,7 @@ def safe_rerun():
 # DB 초기화(최우선)
 # ===============================
 def get_conn():
-    # rerun 중복 접근 안정성 향상
+    # rerun 중복 접근 대비
     return sqlite3.connect(APP_DB, check_same_thread=False)
 
 def init_db():
@@ -223,6 +222,7 @@ DEFAULT_DAILY = dict(date=TODAY, goal_min=120, coins=0, streak=0, theme="핑크"
 def ensure_today():
     uid = st.session_state.user_id
     if not uid:
+        # 로그인 전/없는 경우에는 아무 것도 하지 않음
         return
     with closing(get_conn()) as conn:
         c = conn.cursor()
@@ -241,12 +241,13 @@ def ensure_today():
 def get_daily():
     uid = st.session_state.user_id
     if not uid:
-        # 로그인 전에는 기본값 반환(사이드바 안전)
+        # 로그인 전에는 기본값만 반환(DB 접근 금지)
         return DEFAULT_DAILY.copy()
     ensure_today()
     with closing(get_conn()) as conn:
         df = pd.read_sql_query("SELECT * FROM daily WHERE date=? AND user_id=?", conn, params=(TODAY, uid))
     if df.empty:
+        # 혹시 ensure_today가 타이밍상 반영되지 않았을 때도 방어
         return DEFAULT_DAILY.copy()
     r = df.iloc[0]
     return dict(
@@ -483,9 +484,9 @@ def apply_theme(theme_name):
     """
     st.markdown(css, unsafe_allow_html=True)
 
-# 로그인 여부에 따라 안전하게 테마 적용
+# 로그인 여부 무관 기본 테마 안전 적용
 try:
-    d_for_theme = get_daily()  # 로그인 전에도 기본값 반환
+    d_for_theme = get_daily()
     apply_theme(d_for_theme.get("theme", "핑크"))
 except Exception:
     apply_theme("핑크")
@@ -509,7 +510,6 @@ if st.session_state.user_id:
 
     st.sidebar.markdown("---")
     d_now = get_daily()
-    # d_now는 항상 키 보유(기본값 포함)
     st.sidebar.markdown(f"보유 코인: {d_now['coins']} • 스트릭: {d_now['streak']}일")
     st.sidebar.caption(f"현재 테마: {d_now['theme']} • 사운드: {d_now['sound']} • 마스코트: {d_now['mascot']}")
 
@@ -541,7 +541,7 @@ if st.session_state.user_id:
             st.session_state.active_tab = TAB_STATS; safe_rerun()
     with c_nav5:
         if st.button("EMOJI_3 상점", key="top_shop"):
-            st.session_state.active_tab = TAB_SHOP; safe_rerun()
+            st.session_state.active_tab = TAB_SHॉप; safe_rerun()
     with c_nav6:
         if st.button("로그아웃", key="top_logout"):
             st.session_state.user_id = None
