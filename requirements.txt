@@ -1,1 +1,7 @@
 streamlit-autorefresh
+streamlit
+pandas
+altair
+pillow
+passlib
+bcrypt
